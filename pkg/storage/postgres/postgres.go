@@ -49,6 +49,32 @@ func (s *Storage) Save(ctx context.Context, p *storage.Product) (uint, error) {
 	return ID, nil
 }
 
+// AddOrder сохраняет заказ
+func (s *Storage) AddOrder(ctx context.Context, o *storage.Order) (uint, error) {
+	q := `INSERT INTO Orders (username, amount, date, pay_type_id, buyers_phone) 
+		  VALUES ($1, $2, $3, $4, $5) RETURNING id`
+	var ID uint
+	err := s.db.QueryRowContext(ctx, q, o.UserName, o.Amount, o.Date, o.PayType.ID, o.BuersPhone).Scan(&ID)
+	if err != nil {
+		return 0, fmt.Errorf("can't save order: %w", err)
+	}
+
+	return ID, nil
+}
+
+// AddOrderDetail сохраняет детали заказа
+func (s *Storage) AddOrderDetail(ctx context.Context, o *storage.OrderDetail) (uint, error) {
+	q := `INSERT INTO Orders (order_id, product_id, amount, count, discount, factSum) 
+		  VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`
+	var ID uint
+	err := s.db.QueryRowContext(ctx, q, o.OrderID, o.ProductID, o.Amount, o.Count, o.Discount, o.FactSum).Scan(&ID)
+	if err != nil {
+		return 0, fmt.Errorf("can't save order details: %w", err)
+	}
+
+	return ID, nil
+}
+
 // UpdateProductField обновляет параметр товара
 func (s *Storage) UpdateProductField(ctx context.Context, productID uint, field string, value interface{}) error {
 	query := fmt.Sprintf("UPDATE products SET %s = $1 WHERE id = $2", field)
@@ -240,7 +266,7 @@ func (s *Storage) UpdProduct(ctx context.Context, productID uint, param string, 
 
 // Init создает таблицы Products и Images, если их еще нет.
 func (s *Storage) Init(ctx context.Context) error {
-	q1 := `CREATE TABLE IF NOT EXISTS Products (
+	q1 := `CREATE TABLE IF NOT EXISTS products (
 		id SERIAL PRIMARY KEY,
 		user_name TEXT,
 		name TEXT,
@@ -255,7 +281,7 @@ func (s *Storage) Init(ctx context.Context) error {
 		return fmt.Errorf("can't create Products table: %w", err)
 	}
 
-	q2 := `CREATE TABLE IF NOT EXISTS Images (
+	q2 := `CREATE TABLE IF NOT EXISTS images (
 		id SERIAL PRIMARY KEY,
 		username TEXT,
 		product_id SERIAL,
@@ -266,6 +292,46 @@ func (s *Storage) Init(ctx context.Context) error {
 	_, err = s.db.ExecContext(ctx, q2)
 	if err != nil {
 		return fmt.Errorf("can't create Images table: %w", err)
+	}
+	
+
+	q3 := `CREATE TABLE IF NOT EXISTS orders (
+		id SERIAL PRIMARY KEY,
+		username TEXT,
+		amount NUMERIC(10, 2),
+		date DATE,
+		pay_type_id NUMERIC(2),
+		buyers_phone TEXT
+		)`
+
+	_, err = s.db.ExecContext(ctx, q3)
+	if err != nil {
+		return fmt.Errorf("can't create Sales table: %w", err)
+	}
+
+	q4 := `CREATE TABLE IF NOT EXISTS order_details (
+		id SERIAL PRIMARY KEY,
+		sale_id NUMERIC NOT NULL,
+		product_id NUMERIC NOT NULL,
+		amount NUMERIC(10, 2) NOT NULL,
+		count NUMERIC(10) NOT NULL,
+		discount NUMERIC(3),
+		factSum NUMERIC(10, 2) NOT NULL
+	);`
+
+	_, err = s.db.ExecContext(ctx, q4)
+	if err != nil {
+		return fmt.Errorf("can't create SalesDetails table: %w", err)
+	}
+	
+	q5 := `CREATE TABLE IF NOT EXISTS pay_types (
+		id SERIAL PRIMARY KEY,
+		description text
+	);`
+
+	_, err = s.db.ExecContext(ctx, q5)
+	if err != nil {
+		return fmt.Errorf("can't create SalesDetails table: %w", err)
 	}
 	return nil
 }

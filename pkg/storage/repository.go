@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/shopspring/decimal"
 )
@@ -40,4 +41,29 @@ type ImageMeta struct {
 	Byte      []byte
 	Float     []float64
 	Url       string
+}
+
+type Order struct {
+	ID  uint
+	UserName string
+	Amount   decimal.Decimal
+	Date     *time.Time
+	PayType  *PayType
+	Details  *[]OrderDetail
+	BuersPhone string
+}
+
+type PayType struct {
+	ID   uint
+	Description string
+}
+
+type OrderDetail struct {
+	ID  uint
+	OrderID   uint
+	ProductID uint
+	Amount    decimal.Decimal
+	Count     uint
+	Discount  uint
+	FactSum   decimal.Decimal
 }
