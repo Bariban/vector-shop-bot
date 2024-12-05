@@ -26,12 +26,13 @@ type getFileResponse struct {
 }
 
 func (b *Bot) handleMessageCommand(message *tgbotapi.Message) error {
-	state := b.states[message.Chat.ID]
+
+	chatID := message.Chat.ID
+	state := b.states[chatID]
 	switch message.Text {
 	case StartCmd:
 		return b.handleStartTxt(message)
 	case AddProductText:
-		chatID := message.Chat.ID
 		b.states[chatID] = stateWaitingForPhoto
 		product := &storage.Product{
 			UserName: message.From.UserName,
@@ -41,6 +42,8 @@ func (b *Bot) handleMessageCommand(message *tgbotapi.Message) error {
 		msg := tgbotapi.NewMessage(chatID, b.messages.Responses.SendPhoto)
 		_, err := b.bot.Send(msg)
 		return err
+	case PaymentText:
+		return b.handleSelectPayType(message)
 	default:
 		if addProductStates[state] {
 			return b.handleAddProductCmd(message)
@@ -54,8 +57,12 @@ func (b *Bot) handleMessageCommand(message *tgbotapi.Message) error {
 			return b.handleSampleImage(message)
 		}
 
-		if makeCartStates[state] {
+		if state == stateEditCountItemInCart {
 			return b.handleEditCountItemInCart(message)
+		}
+
+		if state == stateDiscountProductInCart {
+			return b.handleDiscoutItemInCart(message)
 		}
 
 		return b.handleUnknownCmd(message)
@@ -126,8 +133,12 @@ func (b *Bot) handleCallbackCommand(callback *tgbotapi.CallbackQuery) error {
 		return b.handleReduceItemInCart(callback)
 	case EditCountItemInCartCmd:
 		return b.handleEditCountItemInCart(callback.Message)
+	case DiscountItemInCartCmd:
+		return b.handleDiscoutItemInCart(callback.Message)
 	case RemoveItemFromCartCmd:
 		return b.handleRemoveItemFromCart(callback.Message)
+	case PayTypeCashCmd:
+		return b.handleAddOrder(callback, action)
 
 	default:
 		return nil
@@ -378,6 +389,7 @@ func (b *Bot) handleSampleImage(message *tgbotapi.Message) error {
 						CountStore: product.Count,
 						CountCart:  0,
 						Price:      product.SellingPrice,
+						PriceStore: product.SellingPrice,
 					}
 				}
 

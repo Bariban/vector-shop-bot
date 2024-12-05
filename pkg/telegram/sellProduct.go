@@ -1,11 +1,13 @@
 package telegram
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"strconv"
 	"strings"
 
+	"github.com/Bariban/vector-shop-bot/pkg/storage"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
 	"github.com/shopspring/decimal"
 )
@@ -21,8 +23,15 @@ func (b *Bot) getAddItemToCartKeyboard(productID uint) tgbotapi.InlineKeyboardMa
 
 // getProductActionKeyboard возвращает клавиатуру с действиями над товаром
 func (b *Bot) getCountItemInCartKeyboard(chatID int64, productID uint) tgbotapi.InlineKeyboardMarkup {
+	cart := b.cartItems[chatID].CartItems[productID]
+	countItem := int(cart.CountCart)
 
-	countItem := int(b.cartItems[chatID].CartItems[productID].CountCart)
+	var discount string
+	if cart.Discount != 0 {
+		discount = "Скидка  -" + strconv.Itoa(int(cart.Discount)) + "%"
+	} else {
+		discount = "Скидка"
+	}
 
 	return tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
@@ -31,6 +40,7 @@ func (b *Bot) getCountItemInCartKeyboard(chatID int64, productID uint) tgbotapi.
 			tgbotapi.NewInlineKeyboardButtonData("  ➕  ", fmt.Sprintf("%s_%d", AddItemToCartCmd, productID)),
 		),
 		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(discount, fmt.Sprintf("%s_%d", DiscountItemInCartCmd, productID)),
 			tgbotapi.NewInlineKeyboardButtonData("Убрать из корзины", fmt.Sprintf("%s_%d", RemoveItemFromCartCmd, productID)),
 		),
 	)
@@ -54,7 +64,6 @@ func (b *Bot) handleAddItemToCart(callback *tgbotapi.CallbackQuery) error {
 		return nil
 	}
 
-
 	var str string
 	if cartItem.CountCart < cartItem.CountStore {
 		cartItem.CountCart++
@@ -62,12 +71,11 @@ func (b *Bot) handleAddItemToCart(callback *tgbotapi.CallbackQuery) error {
 		cart.Amount = cart.Amount.Add(cartItem.Price)
 		b.cartItems[chatID] = cart
 	}
-	
 
 	cartItem.MsgID = messageID
 	b.cartItems[chatID].CartItems[product.ProductID] = cartItem
 
-	if cartItem.CountCart == 1{			
+	if cartItem.CountCart == 1 {
 		b.cleanUpMessages(chatID, messageID)
 		b.tempMsgID[chatID] = messageID
 	}
@@ -94,7 +102,6 @@ func (b *Bot) handleReduceItemInCart(callback *tgbotapi.CallbackQuery) error {
 	cartItem, exists := cart.CartItems[product.ProductID]
 
 	if !exists {
-		b.states[chatID] = stateEditCountItemInCart
 		b.bot.Send(tgbotapi.NewMessage(chatID, "Товар не найден:"))
 		return nil
 	}
@@ -119,6 +126,76 @@ func (b *Bot) handleReduceItemInCart(callback *tgbotapi.CallbackQuery) error {
 	msg := tgbotapi.NewEditMessageReplyMarkup(chatID, cartItem.MsgID, CountItemInCartKeyboard)
 	_, err := b.bot.Send(msg)
 
+	return err
+}
+
+func (b *Bot) handleDiscoutItemInCart(message *tgbotapi.Message) error {
+	chatID := message.Chat.ID
+	product := b.tempProduct[chatID]
+	state := b.states[chatID]
+
+	cart, exists := b.cartItems[chatID]
+	if !exists {
+		b.bot.Send(tgbotapi.NewMessage(chatID, "Корзина не найдена:"))
+		return nil
+	}
+
+	cartItem, exists := cart.CartItems[product.ProductID]
+	count := cartItem.CountCart
+	if !exists {
+		b.bot.Send(tgbotapi.NewMessage(chatID, "Товар не найден:"))
+		return nil
+	}
+
+	if state != stateDiscountProductInCart {
+		b.states[chatID] = stateDiscountProductInCart
+		b.bot.Send(tgbotapi.NewMessage(chatID, "Введите скидку:"))
+		return nil
+	}
+
+	input := strings.TrimSpace(message.Text)
+	if len(input) == 0 {
+		b.bot.Send(tgbotapi.NewMessage(chatID, "Введите корректное значение:"))
+		return nil
+	}
+
+	// Преобразуем оставшуюся часть в число
+	discount, err := strconv.Atoi(input)
+	if err != nil || discount < 0 || discount > 100 {
+		b.bot.Send(tgbotapi.NewMessage(chatID, "Введите значение скидки от 0 до 100:"))
+		return nil
+	}
+
+	// Вычисляем новую цену со скидкой
+	discountFactor := decimal.NewFromFloat(1 - float64(discount)/100)
+	newPrice := cartItem.PriceStore.Mul(discountFactor)
+
+	// Вычисляем разницу в сумме
+	var str string
+	if count > 0 {
+		originalTotal := cartItem.Price.Mul(decimal.NewFromInt(int64(count)))
+		discounted := newPrice.Mul(decimal.NewFromInt(int64(count)))
+		discountedTotal := originalTotal.Sub(discounted)
+		str = "-" + discountedTotal.String()
+		cart.Amount = discounted
+		b.cartItems[chatID] = cart
+	}
+
+	// Обновляем цену
+	cartItem.Price = newPrice
+	cartItem.Discount = uint(discount)
+	if cartItem.MsgID == 0 {
+		cartItem.MsgID = message.MessageID
+	}
+	b.cartItems[chatID].CartItems[product.ProductID] = cartItem
+
+	b.getSellingKeyboard(chatID, str)
+
+	CountItemInCartKeyboard := b.getCountItemInCartKeyboard(chatID, product.ProductID)
+	msg := tgbotapi.NewEditMessageReplyMarkup(chatID, cartItem.MsgID, CountItemInCartKeyboard)
+	_, err = b.bot.Send(msg)
+
+	delete(b.states, chatID)
 	return err
 }
 
@@ -253,7 +330,7 @@ func (b *Bot) handleRemoveItemFromCart(message *tgbotapi.Message) error {
 	if exists {
 		d := decimal.NewFromInt(int64(cartItem.CountCart)).Mul(cartItem.Price)
 		cartItem.CountCart = 0
-		str = "-"+ d.String()
+		str = "-" + d.String()
 		cart.Amount = cart.Amount.Sub(d)
 		b.cartItems[chatID] = cart
 	}
@@ -273,8 +350,8 @@ func (b *Bot) handleRemoveItemFromCart(message *tgbotapi.Message) error {
 
 func (b *Bot) cleanUpMessages(chatID int64, lastMsgID int) {
 	exceptMsgIDs := make(map[int]bool)
-	tmpMsg :=b.tempMsgID[chatID]
-	if tmpMsg == 0{
+	tmpMsg := b.tempMsgID[chatID]
+	if tmpMsg == 0 {
 		return
 	}
 
@@ -334,4 +411,82 @@ func abs(x int) int {
 		return -x
 	}
 	return x
+}
+
+// handleAddOrder сохраняем заказ
+func (b *Bot) handleAddOrder(callback *tgbotapi.CallbackQuery, payType string) error {
+
+	chatID := callback.Message.Chat.ID
+	cart := b.cartItems[chatID]
+	b.tempMsgID[chatID] = 0
+
+	// Формируем список деталей заказа
+	details := make([]*storage.OrderDetail, 0, len(cart.CartItems))
+	for productID, item := range cart.CartItems {
+		factSum := item.Price.Mul(decimal.NewFromInt(int64(item.CountCart)))
+		details = append(details, &storage.OrderDetail{
+			ProductID: productID,
+			Amount:    item.Price,
+			Count:     item.CountCart,
+			FactSum:   factSum,
+		})
+	}
+
+	// Создаём объект заказа
+	order := &storage.Order{
+		UserName: callback.From.UserName,
+		Amount:   cart.Amount,
+		Details:  details,
+		PayType:  &storage.PayType{Description: payType}, // Пример преобразования типа оплаты
+	}
+
+	// Сохраняем заказ и детали через транзакцию
+	ctx := context.Background()
+	orderID, err := b.storage.AddOrderWithDetails(ctx, order)
+	if err != nil {
+		b.bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("Ошибка сохранения заказа: %v", err)))
+		return err
+	}
+	// Очистка корзины
+	delete(b.cartItems, chatID)
+
+	// Уведомление об успешном сохранении
+	b.bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("Заказ #%d успешно сохранён!", orderID)))
+	return nil
+}
+
+// handleSelectPayType запрашиваем тип платежа
+func (b *Bot) handleSelectPayType(message *tgbotapi.Message) error {
+	chatID := message.Chat.ID
+	cart := b.cartItems[chatID]
+
+	if cart.Amount.IsZero() {
+		for _, cartItem := range cart.CartItems {
+			if cartItem.CountCart > 0 {
+				break
+			}
+			msg := tgbotapi.NewMessage(chatID, "Корзина пуста")
+			_, err := b.bot.Send(msg)
+			return err
+		}
+	}
+
+	b.cleanUpMessages(chatID, message.MessageID)
+	msg := tgbotapi.NewMessage(chatID, "Способ оплаты:")
+	msg.ParseMode = "Markdown"
+	msg.ReplyMarkup = b.getPayTypesKeyboard()
+
+	_, err := b.bot.Send(msg)
+	return err
+}
+
+func (b *Bot) getPayTypesKeyboard() tgbotapi.InlineKeyboardMarkup {
+	return tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Наличные", PayTypeCashCmd),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Kaspi", PayTypeKaspiCmd),
+		),
+	)
 }

@@ -20,6 +20,7 @@ type Storage interface {
 	UpdPhoto(ctx context.Context, p *Product) error
 	UpdProduct(ctx context.Context, productID uint, param string, value string) error
 	GetProductByID(ctx context.Context, productID uint) (*Product, error)
+	AddOrderWithDetails(ctx context.Context, order *Order) (uint, error)
 }
 
 var ErrNoSavedProducts = errors.New("no saved Products")
@@ -49,7 +50,7 @@ type Order struct {
 	Amount   decimal.Decimal
 	Date     *time.Time
 	PayType  *PayType
-	Details  *[]OrderDetail
+	Details  []*OrderDetail
 	BuersPhone string
 }
 

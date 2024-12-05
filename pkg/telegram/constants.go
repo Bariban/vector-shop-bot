@@ -25,8 +25,13 @@ const (
 	ReduceItemInCartCmd    = "reduce_item_in_cart"
 	RemoveItemFromCartCmd  = "remove_item_from_cart"
 	EditCountItemInCartCmd = "edit_count_item_in_cart"
+	DiscountItemInCartCmd  = "discount_item_in_cart"
 )
 
+const (
+	PayTypeCashCmd = "pay_type_cash"
+	PayTypeKaspiCmd = "pay_type_kaspi"
+)
 const (
 	stateWaitingForPhoto         = 1
 	stateWaitingForName          = 2
@@ -46,6 +51,7 @@ const (
 
 const (
 	stateEditCountItemInCart = 12
+	stateDiscountProductInCart = 13
 )
 
 var addProductStates = map[int]bool{
@@ -66,10 +72,12 @@ var editProductStates = map[int]bool{
 
 var makeCartStates = map[int]bool{
 	stateEditCountItemInCart: true,
+	stateDiscountProductInCart :true,
 }
 
 const (
 	AddProductText  = "Добавить товар"
 	SaleProductText = "Продажа"
 	MenuText        = "Меню"
+	PaymentText     = "Оплата"
 )

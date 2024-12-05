@@ -66,5 +66,7 @@ type CartItem struct {
 	MsgID      int
 	CountStore uint
 	CountCart  uint
+	Discount   uint
+	PriceStore decimal.Decimal
 	Price      decimal.Decimal
 }

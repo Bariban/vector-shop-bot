@@ -49,30 +49,55 @@ func (s *Storage) Save(ctx context.Context, p *storage.Product) (uint, error) {
 	return ID, nil
 }
 
-// AddOrder сохраняет заказ
-func (s *Storage) AddOrder(ctx context.Context, o *storage.Order) (uint, error) {
-	q := `INSERT INTO Orders (username, amount, date, pay_type_id, buyers_phone) 
-		  VALUES ($1, $2, $3, $4, $5) RETURNING id`
-	var ID uint
-	err := s.db.QueryRowContext(ctx, q, o.UserName, o.Amount, o.Date, o.PayType.ID, o.BuersPhone).Scan(&ID)
+// AddOrderWithDetails сохраняет заказ и детали в одной транзакции
+func (s *Storage) AddOrderWithDetails(ctx context.Context, order *storage.Order) (uint, error) {
+	// Начинаем транзакцию
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, fmt.Errorf("can't save order: %w", err)
+		return 0, fmt.Errorf("не удалось начать транзакцию: %w", err)
 	}
 
-	return ID, nil
-}
-
-// AddOrderDetail сохраняет детали заказа
-func (s *Storage) AddOrderDetail(ctx context.Context, o *storage.OrderDetail) (uint, error) {
-	q := `INSERT INTO Orders (order_id, product_id, amount, count, discount, factSum) 
-		  VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`
-	var ID uint
-	err := s.db.QueryRowContext(ctx, q, o.OrderID, o.ProductID, o.Amount, o.Count, o.Discount, o.FactSum).Scan(&ID)
+	// Вставляем заказ
+	orderID := uint(0)
+	queryOrder := `INSERT INTO Orders (username, amount, pay_type_id, buyers_phone) 
+                   VALUES ($1, $2, $3, $4) RETURNING id`
+	err = tx.QueryRowContext(ctx, queryOrder, order.UserName, order.Amount, order.PayType.ID, order.BuersPhone).Scan(&orderID)
 	if err != nil {
-		return 0, fmt.Errorf("can't save order details: %w", err)
+		tx.Rollback() // Откат транзакции
+		return 0, fmt.Errorf("не удалось сохранить заказ: %w", err)
 	}
 
-	return ID, nil
+	// Вставляем детали заказа
+	queryDetail := `INSERT INTO Order_Details (order_id, product_id, amount, count, discount, fact_sum) 
+                    VALUES ($1, $2, $3, $4, $5, $6)`
+	for _, detail := range order.Details {
+		_, err = tx.ExecContext(ctx, queryDetail, orderID, detail.ProductID, detail.Amount, detail.Count, detail.Discount, detail.FactSum)
+		if err != nil {
+			tx.Rollback() // Откат транзакции
+			return 0, fmt.Errorf("не удалось сохранить детали заказа: %w", err)
+		}
+		// Обновляем количество товара
+		queryUpdateProduct := `UPDATE products SET count = count - $1 WHERE id = $2 AND count >= $1`
+		res, err := tx.ExecContext(ctx, queryUpdateProduct, detail.Count, detail.ProductID)
+		if err != nil {
+			tx.Rollback()
+			return 0, fmt.Errorf("не удалось обновить количество товара %d: %w", detail.ProductID, err)
+		}
+
+		rowsAffected, _ := res.RowsAffected()
+		if rowsAffected == 0 {
+			tx.Rollback()
+			return 0, fmt.Errorf("недостаточно товара")
+		}
+	}
+
+	// Завершаем транзакцию
+	err = tx.Commit()
+	if err != nil {
+		return 0, fmt.Errorf("не удалось завершить транзакцию: %w", err)
+	}
+
+	return orderID, nil
 }
 
 // UpdateProductField обновляет параметр товара
@@ -297,26 +322,26 @@ func (s *Storage) Init(ctx context.Context) error {
 
 	q3 := `CREATE TABLE IF NOT EXISTS orders (
 		id SERIAL PRIMARY KEY,
-		username TEXT,
-		amount NUMERIC(10, 2),
-		date DATE,
+		username TEXT NOT NULL,
+		amount NUMERIC(10, 2) NOT NULL,
+		date DATE NOT NULL DEFAULT now(),
 		pay_type_id NUMERIC(2),
 		buyers_phone TEXT
 		)`
 
 	_, err = s.db.ExecContext(ctx, q3)
 	if err != nil {
-		return fmt.Errorf("can't create Sales table: %w", err)
+		return fmt.Errorf("can't create orders table: %w", err)
 	}
 
 	q4 := `CREATE TABLE IF NOT EXISTS order_details (
 		id SERIAL PRIMARY KEY,
-		sale_id NUMERIC NOT NULL,
+		order_id NUMERIC NOT NULL,
 		product_id NUMERIC NOT NULL,
 		amount NUMERIC(10, 2) NOT NULL,
 		count NUMERIC(10) NOT NULL,
 		discount NUMERIC(3),
-		factSum NUMERIC(10, 2) NOT NULL
+		fact_sum NUMERIC(10, 2) NOT NULL
 	);`
 
 	_, err = s.db.ExecContext(ctx, q4)
