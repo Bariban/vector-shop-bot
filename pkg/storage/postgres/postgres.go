@@ -346,7 +346,7 @@ func (s *Storage) Init(ctx context.Context) error {
 
 	_, err = s.db.ExecContext(ctx, q4)
 	if err != nil {
-		return fmt.Errorf("can't create SalesDetails table: %w", err)
+		return fmt.Errorf("can't create order_details table: %w", err)
 	}
 	
 	q5 := `CREATE TABLE IF NOT EXISTS pay_types (
@@ -356,8 +356,35 @@ func (s *Storage) Init(ctx context.Context) error {
 
 	_, err = s.db.ExecContext(ctx, q5)
 	if err != nil {
-		return fmt.Errorf("can't create SalesDetails table: %w", err)
+		return fmt.Errorf("can't create pay_types table: %w", err)
 	}
+
+	q6 := `CREATE TABLE IF NOT EXISTS shops (
+		id SERIAL PRIMARY KEY,
+		name VARCHAR(255) NOT NULL,
+		owner_username VARCHAR(255) NOT NULL,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	);`
+
+	_, err = s.db.ExecContext(ctx, q6)
+	if err != nil {
+		return fmt.Errorf("can't create shops table: %w", err)
+	}
+
+	q7 := `CREATE TABLE IF NOT EXISTS shop_users (
+		id SERIAL PRIMARY KEY,
+		shop_id INT NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+		username VARCHAR(255) NOT NULL,
+		role VARCHAR(50) NOT NULL, -- 'admin', 'seller', 'viewer'
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE (shop_id, username)
+	);`
+
+	_, err = s.db.ExecContext(ctx, q7)
+	if err != nil {
+		return fmt.Errorf("can't create shop_users table: %w", err)
+	}
+
 	return nil
 }
 
@@ -386,4 +413,36 @@ func StringToFloat64Slice(str string) ([]float64, error) {
 		floatSlice[i] = num
 	}
 	return floatSlice, nil
+}
+
+func (s *Storage) CreateShop(ctx context.Context, name, ownerUsername string) (int, error) {
+	query := `INSERT INTO shops (name, owner_username) VALUES ($1, $2) RETURNING id`
+	var shopID int
+	err := s.db.QueryRowContext(ctx, query, name, ownerUsername).Scan(&shopID)
+	if err != nil {
+		return 0, fmt.Errorf("error creating shop: %w", err)
+	}
+	return shopID, nil
+}
+
+func (s *Storage) AddShopUser(ctx context.Context, shopID int, username, role string) error {
+	query := `INSERT INTO shop_users (shop_id, username, role) VALUES ($1, $2, $3) ON CONFLICT (shop_id, username) DO NOTHING`
+	_, err := s.db.ExecContext(ctx, query, shopID, username, role)
+	if err != nil {
+		return fmt.Errorf("error adding user to shop: %w", err)
+	}
+	return nil
+}
+
+func (s *Storage) GetUserRole(ctx context.Context, shopID int, username string) (string, error) {
+	query := `SELECT role FROM shop_users WHERE shop_id = $1 AND username = $2`
+	var role string
+	err := s.db.QueryRowContext(ctx, query, shopID, username).Scan(&role)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil // Пользователь не найден
+		}
+		return "", fmt.Errorf("error fetching user role: %w", err)
+	}
+	return role, nil
 }

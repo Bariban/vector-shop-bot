@@ -10,6 +10,12 @@ const (
 )
 
 const (
+	CreateShopCmd = "/create_shop"
+	InviteUserCmd = "/invite_user"
+	ListUsersCmd  = "/list_users"
+)
+
+const (
 	EditProductNameCmd     = "edit_product_name"
 	EditProductCountCmd    = "edit_product_count"
 	EditProductPurchaseCmd = "edit_product_purchase"
@@ -29,9 +35,10 @@ const (
 )
 
 const (
-	PayTypeCashCmd = "pay_type_cash"
+	PayTypeCashCmd  = "pay_type_cash"
 	PayTypeKaspiCmd = "pay_type_kaspi"
 )
+
 const (
 	stateWaitingForPhoto         = 1
 	stateWaitingForName          = 2
@@ -50,7 +57,7 @@ const (
 )
 
 const (
-	stateEditCountItemInCart = 12
+	stateEditCountItemInCart   = 12
 	stateDiscountProductInCart = 13
 )
 
@@ -70,14 +77,9 @@ var editProductStates = map[int]bool{
 	stateWaitingForEditSellingPrice:  true,
 }
 
-var makeCartStates = map[int]bool{
-	stateEditCountItemInCart: true,
-	stateDiscountProductInCart :true,
-}
-
 const (
-	AddProductText  = "Добавить товар"
-	SaleProductText = "Продажа"
-	MenuText        = "Меню"
-	PaymentText     = "Оплата"
+	AddProductText       = "Добавить товар"
+	CancelOperationsText = "Отмена"
+	MenuText             = "Меню"
+	PaymentText          = "Оплата"
 )

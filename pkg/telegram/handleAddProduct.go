@@ -14,6 +14,21 @@ import (
 func (b *Bot) handleAddProductCmd(message *tgbotapi.Message) error {
 	chatID := message.Chat.ID
 	product := b.tempProduct[chatID]
+	if message.Text == "Добавить товар" {
+		delete(b.states, chatID)
+		delete(b.tempProduct, chatID)
+	}
+	if b.states[chatID] != stateWaitingForPhoto {
+		b.states[chatID] = stateWaitingForPhoto
+		product := &storage.Product{
+			UserName: message.From.UserName,
+			Image:    []*storage.ImageMeta{{}},
+		}
+		b.tempProduct[chatID] = product
+		msg := tgbotapi.NewMessage(chatID, b.messages.Responses.SendPhoto)
+		_, err := b.bot.Send(msg)
+		return err
+	}
 	if product == nil {
 		return fmt.Errorf("product data not initialized for chat: %d", chatID)
 	}

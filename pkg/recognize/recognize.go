@@ -40,7 +40,7 @@ func DecodeVector(encoded string) ([]float64, error) {
 }
 
 // CompareFeatureVectors сравнивает два вектора и возвращает true, если они сходятся.
-func CompareFeatureVectors(vector1, vector2 []float64, ) (bool, error) {
+func CompareFeatureVectors(vector1, vector2 []float64, d float64) (bool, error) {
 	// Проверяем, совпадает ли размерность векторов
 	if len(vector1) != len(vector2) {
 		return false, fmt.Errorf("Vectors have different dimensions: %d vs %d", len(vector1), len(vector2))
@@ -55,7 +55,7 @@ func CompareFeatureVectors(vector1, vector2 []float64, ) (bool, error) {
 	distance := math.Sqrt(sum)
 
 	// Возвращаем true, если расстояние меньше или равно порогу
-	return distance <= 0.6, nil
+	return distance <= d, nil
 }
 
 

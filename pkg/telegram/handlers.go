@@ -33,17 +33,13 @@ func (b *Bot) handleMessageCommand(message *tgbotapi.Message) error {
 	case StartCmd:
 		return b.handleStartTxt(message)
 	case AddProductText:
-		b.states[chatID] = stateWaitingForPhoto
-		product := &storage.Product{
-			UserName: message.From.UserName,
-			Image:    []*storage.ImageMeta{{}},
-		}
-		b.tempProduct[chatID] = product
-		msg := tgbotapi.NewMessage(chatID, b.messages.Responses.SendPhoto)
-		_, err := b.bot.Send(msg)
-		return err
+		return b.handleAddProductCmd(message)
 	case PaymentText:
 		return b.handleSelectPayType(message)
+	case CancelOperationsText:
+		return b.handleCancelOperations(message)
+	// case MenuText:
+	// 	return b.handleMenu(message)
 	default:
 		if addProductStates[state] {
 			return b.handleAddProductCmd(message)
@@ -149,7 +145,7 @@ func (b *Bot) handleStartTxt(message *tgbotapi.Message) error {
 	buttons := tgbotapi.NewReplyKeyboard(
 		tgbotapi.NewKeyboardButtonRow(
 			tgbotapi.NewKeyboardButton("Добавить товар"),
-			tgbotapi.NewKeyboardButton("Продажа"),
+			tgbotapi.NewKeyboardButton("Отмена"),
 			tgbotapi.NewKeyboardButton("Меню"),
 		),
 	)
@@ -245,7 +241,7 @@ func (b *Bot) getProductsByVector(message *tgbotapi.Message, vector []float64) (
 
 	// Сравнение векторов
 	for _, image := range images {
-		ok, err := recognize.CompareFeatureVectors(vector, image.Float)
+		ok, err := recognize.CompareFeatureVectors(vector, image.Float, 0.5)
 		if err != nil {
 			return nil, fmt.Errorf("ошибка при сравнении файлов: %w", err)
 		}
@@ -423,5 +419,16 @@ func (b *Bot) handleSampleImage(message *tgbotapi.Message) error {
 		_, err = b.bot.Send(msg)
 		return err
 	}
+	return nil
+}
+
+func (b *Bot) handleCancelOperations(message *tgbotapi.Message) error {
+	chatID := message.Chat.ID
+
+	delete(b.states, chatID)
+	delete(b.tempProduct, chatID)
+	delete(b.cartItems, chatID)
+	delete(b.selectedParams, chatID)
+	delete(b.tempMsgID, chatID)
 	return nil
 }

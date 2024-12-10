@@ -390,6 +390,7 @@ func (b *Bot) getSellingKeyboard(chatID int64, str string) (int, error) {
 	buttons := tgbotapi.NewReplyKeyboard(
 		tgbotapi.NewKeyboardButtonRow(
 			tgbotapi.NewKeyboardButton(fmt.Sprintf("🛍 %s", amount.StringFixed(2))), // Форматируем сумму
+			tgbotapi.NewKeyboardButton("Отмена"),
 			tgbotapi.NewKeyboardButton("Оплата"),
 		),
 	)
@@ -452,7 +453,7 @@ func (b *Bot) handleAddOrder(callback *tgbotapi.CallbackQuery, payType string) e
 
 	// Уведомление об успешном сохранении
 	b.bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("Заказ #%d успешно сохранён!", orderID)))
-	return nil
+	return b.handleStartTxt(callback.Message)
 }
 
 // handleSelectPayType запрашиваем тип платежа
