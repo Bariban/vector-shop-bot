@@ -20,6 +20,14 @@ type Errors struct {
 	UnableToSave string `mapstructure:"unable_to_save"`
 }
 
+type Options struct {
+	VectorExpectedDim int `mapstructure:"vector_expected_dim"`
+	VectorEfConstruction int `mapstructure:"vector_ef_construction"`
+	VectorCommunication int `mapstructure:"vector_communication"`
+	VectorIndexFile string `mapstructure:"vector_index_file"`
+	
+}
+
 type Config struct {
 	TelegramToken     string
 	PocketConsumerKey string
@@ -28,7 +36,8 @@ type Config struct {
 	BotURL     string `mapstructure:"bot_url"`
 	BoltDBFile string `mapstructure:"db_file"`
 
-	Messages Messages
+	Messages 	Messages
+	Options   	Options
 }
 
 func Init() (*Config, error) {

@@ -2,11 +2,19 @@ db_file: "bot.db"
 
 bot_url: "https://t.me/getpocket_client_bot"
 
+options:
+  vector_expected_dim: 768
+  vector_ef_construction: 200
+  vector_communication: 16
+  vector_index_file: "hnsw_index.bin"
+
 messages:
   response:
     start: "🤖 Привет! Я помогу тебе вести продажи.\n Использую для этого нейросети."
     unknown_command: "Я не знаю такой команды :("
     link_saved: "Ссылка успешно сохранена!"
-    send_photo: "Отправьте фото товара 📷"
+    send_photo: "Отправьте фото и название товара:"
   error:
     default: "Произошла неизвестная ошибка."
+
+

@@ -111,18 +111,22 @@ func (s *Storage) UpdateProductField(ctx context.Context, productID uint, field 
 }
 
 // SaveImage добавляет изображение в таблицу Images, привязывая его к товару по product_id.
-func (s *Storage) SaveImage(ctx context.Context, p *storage.Product) error {
-	q := `INSERT INTO Images (product_id, username, blob_content, vector) VALUES ($1, $2, $3, $4)`
+func (s *Storage) SaveImage(ctx context.Context, p *storage.Product) (*storage.Product, error) {
+	q := `INSERT INTO Images (product_id, username, blob_content, vector) 
+          VALUES ($1, $2, $3, $4) RETURNING id`
 
-	for _, image := range p.Image {
-		_, err := s.db.ExecContext(ctx, q, p.ProductID, p.UserName, image.Byte, Float64SliceToString(image.Float))
+	for i, image := range p.Image {
+		var imageID uint
+		err := s.db.QueryRowContext(ctx, q, p.ProductID, p.UserName, image.Byte, float32SliceToString(image.Float)).Scan(&imageID)
 		if err != nil {
-			return fmt.Errorf("can't save photo: %w", err)
+			return nil, fmt.Errorf("can't save photo: %w", err)
 		}
+		p.Image[i].ImageID = imageID 
 	}
 
-	return nil
+	return p, nil
 }
+
 
 // GetPhotosByProductID возвращает список байтовых массивов (контентов фото) для указанного productID.
 func (s *Storage) GetPhotosByProductID(ctx context.Context, productID uint) ([][]byte, error) {
@@ -147,47 +151,32 @@ func (s *Storage) GetPhotosByProductID(ctx context.Context, productID uint) ([][
 	return photos, nil
 }
 
-// GetVectorsByUsername возвращает список числовых массивов (контентов фото) для указанного username.
-func (s *Storage) GetVectorsByUsername(ctx context.Context, username string) ([]*storage.ImageMeta, error) {
-	q := `SELECT product_id, blob_content, vector FROM Images WHERE username = $1`
+// GetPhotosByImageID возвращает список байтовых массивов (контентов фото) для указанного ImageID.
+func (s *Storage) GetVectorByImageID(ctx context.Context, ImageID uint) ([]float32, error) {
+	q := `SELECT vector FROM Images WHERE id = $1`
 
-	rows, err := s.db.QueryContext(ctx, q, username)
+	rows, err := s.db.QueryContext(ctx, q, ImageID)
 	if err != nil {
 		log.Printf("can't get photos for product: %v", err)
 		return nil, fmt.Errorf("can't get photos for product: %w", err)
 	}
 	defer rows.Close()
 
-	var images []*storage.ImageMeta
+	var vectorStr string
 	for rows.Next() {
-		var vectorStr string
-		var productID uint
-		var byte []byte
-		if err := rows.Scan(&productID, &byte, &vectorStr); err != nil {
+		if err := rows.Scan(&vectorStr); err != nil {
 			return nil, fmt.Errorf("can't scan photo content: %w", err)
 		}
-
-		vector, err := StringToFloat64Slice(vectorStr)
-		if err != nil {
-			return nil, fmt.Errorf("can't convert vector string to slice: %w", err)
-		}
-
-		// Создаем объект ImageMeta и добавляем его в срез
-		imageMeta := &storage.ImageMeta{
-			ProductID: productID,
-			Byte:      byte,
-			Float:     vector,
-		}
-		images = append(images, imageMeta)
+	}
+	
+	float32Vector, err := stringToFloat32Slice(vectorStr)
+	if err != nil{
+		return nil, fmt.Errorf("can't stringToFloat32Slice: %w", err)
 	}
 
-	// Проверяем ошибки после цикла rows.Next()
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("rows iteration error: %w", err)
-	}
-
-	return images, nil
+	return float32Vector, nil
 }
+
 
 // GetProducts возвращает список продуктов по имени пользователя.
 func (s *Storage) GetProducts(ctx context.Context, userName string) ([]*storage.Product, error) {
@@ -275,6 +264,40 @@ func (s *Storage) IsExistsVector(ctx context.Context, productID uint) (bool, err
 	}
 
 	return count > 0, nil
+}
+
+// GetVectorsByUserName возвращает список векторов по имени пользователя.
+func (s *Storage) GetVectorsByUserName(ctx context.Context, userName string) ([]*storage.ImageMeta, error) {
+	q := `SELECT id, vector FROM Images WHERE username = $1`
+
+	rows, err := s.db.QueryContext(ctx, q, userName)
+	if err != nil {
+		return nil, fmt.Errorf("can't get vectors by user: %w", err)
+	}
+	defer rows.Close()
+
+	var imageMeta []*storage.ImageMeta
+	for rows.Next() {
+		var id uint
+		var vectorStr string // Временный массив для чтения из PostgreSQL
+
+		err := rows.Scan(&id, &vectorStr)
+		if err != nil {
+			return nil, fmt.Errorf("can't scan vector row: %w", err)
+		}
+
+		float32Vector, err := stringToFloat32Slice(vectorStr)
+		if err != nil{
+			return nil, fmt.Errorf("can't stringToFloat32Slice: %w", err)
+		}
+
+		imageMeta = append(imageMeta, &storage.ImageMeta{
+			ImageID: id,
+			Float:   float32Vector,
+		})
+	}
+
+	return imageMeta, nil
 }
 
 // UpdProduct обновляет параметры товара
@@ -387,30 +410,29 @@ func (s *Storage) Init(ctx context.Context) error {
 
 	return nil
 }
-
-// Конвертация []float64 в строку
-func Float64SliceToString(slice []float64) string {
+// Конвертация []float32 в строку
+func float32SliceToString(slice []float32) string {
 	// Преобразуем каждый элемент в строку и соединяем через запятую
 	strSlice := make([]string, len(slice))
 	for i, num := range slice {
-		strSlice[i] = strconv.FormatFloat(num, 'f', -1, 64) // Без ограничения точности
+		strSlice[i] = strconv.FormatFloat(float64(num), 'f', -1, 32) // Без ограничения точности
 	}
 	return strings.Join(strSlice, ",")
 }
 
-// Конвертация строки обратно в []float64
-func StringToFloat64Slice(str string) ([]float64, error) {
+// Конвертация строки обратно в []float32
+func stringToFloat32Slice(str string) ([]float32, error) {
 	// Разделяем строку по запятой
 	strSlice := strings.Split(str, ",")
-	floatSlice := make([]float64, len(strSlice))
+	floatSlice := make([]float32, len(strSlice))
 
-	// Конвертируем каждый элемент в float64
+	// Конвертируем каждый элемент в float32
 	for i, s := range strSlice {
-		num, err := strconv.ParseFloat(s, 64)
+		num, err := strconv.ParseFloat(s, 32)
 		if err != nil {
-			return nil, fmt.Errorf("не удалось преобразовать '%s' в float64: %w", s, err)
+			return nil, fmt.Errorf("не удалось преобразовать '%s' в float32: %w", s, err)
 		}
-		floatSlice[i] = num
+		floatSlice[i] = float32(num)
 	}
 	return floatSlice, nil
 }
@@ -445,4 +467,35 @@ func (s *Storage) GetUserRole(ctx context.Context, shopID int, username string) 
 		return "", fmt.Errorf("error fetching user role: %w", err)
 	}
 	return role, nil
+}
+
+// GetPhotosByProductID возвращает список байтовых массивов (контентов фото) для указанного productID.
+func (s *Storage) GetProductByImageID(ctx context.Context, imageID uint) (*storage.Product, error) {
+	query := `SELECT p.*
+	FROM products p
+	JOIN images i ON i.product_id = p.id
+	WHERE i.id = $1
+	LIMIT 1
+	`
+
+	row := s.db.QueryRowContext(ctx, query, imageID)
+
+	product := &storage.Product{}
+	err := row.Scan(
+		&product.ProductID,
+		&product.UserName,
+		&product.Name,
+		&product.Description,
+		&product.Count,
+		&product.PurchasePrice,
+		&product.SellingPrice,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil // Товар не найден
+		}
+		return nil, fmt.Errorf("ошибка выполнения запроса: %w", err)
+	}
+
+	return product, nil
 }

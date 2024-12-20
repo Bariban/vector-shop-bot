@@ -14,7 +14,7 @@ type Storage interface {
 	IsExists(ctx context.Context, p *Product) (bool, error)
 	GetProducts(ctx context.Context, userName string) ([]*Product, error)
 	SaveImage(ctx context.Context, p *Product) error
-	SearchVector(ctx context.Context, vector []float64) ([]*Product, error)
+	SearchVector(ctx context.Context, vector []float32) ([]*Product, error)
 	GetPhotosByProductID(ctx context.Context, productID uint) ([][]byte, error)
 	GetNextProductID(ctx context.Context) (uint, error)
 	UpdPhoto(ctx context.Context, p *Product) error
@@ -40,31 +40,38 @@ type ImageMeta struct {
 	ImageID   uint
 	ProductID uint
 	Byte      []byte
-	Float     []float64
+	Float     []float32
 	Url       string
 }
 
 type Order struct {
-	ID  uint
-	UserName string
-	Amount   decimal.Decimal
-	Date     *time.Time
-	PayType  *PayType
-	Details  []*OrderDetail
+	ID         uint
+	UserName   string
+	Amount     decimal.Decimal
+	Date       *time.Time
+	PayType    *PayType
+	Details    []*OrderDetail
 	BuersPhone string
 }
 
 type PayType struct {
-	ID   uint
+	ID          uint
 	Description string
 }
 
 type OrderDetail struct {
-	ID  uint
+	ID        uint
 	OrderID   uint
 	ProductID uint
 	Amount    decimal.Decimal
 	Count     uint
 	Discount  uint
 	FactSum   decimal.Decimal
+}
+
+type Market struct {
+	ID uint
+	Name string
+	Description string
+	Locate string
 }

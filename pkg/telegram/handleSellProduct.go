@@ -452,8 +452,8 @@ func (b *Bot) handleAddOrder(callback *tgbotapi.CallbackQuery, payType string) e
 	delete(b.cartItems, chatID)
 
 	// Уведомление об успешном сохранении
-	b.bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("Заказ #%d успешно сохранён!", orderID)))
-	return b.handleStartTxt(callback.Message)
+	b.bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("Заказ #%d сохранён!", orderID)))
+	return nil
 }
 
 // handleSelectPayType запрашиваем тип платежа

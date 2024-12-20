@@ -38,21 +38,20 @@ func DecodeVector(encoded string) ([]float64, error) {
 
 	return vector, nil
 }
-
 // CompareFeatureVectors сравнивает два вектора и возвращает true, если они сходятся.
-func CompareFeatureVectors(vector1, vector2 []float64, d float64) (bool, error) {
+func CompareFeatureVectors(vector1, vector2 []float32, d float32) (bool, error) {
 	// Проверяем, совпадает ли размерность векторов
 	if len(vector1) != len(vector2) {
-		return false, fmt.Errorf("Vectors have different dimensions: %d vs %d", len(vector1), len(vector2))
+		return false, fmt.Errorf("vectors have different dimensions: %d vs %d", len(vector1), len(vector2))
 	}
 
 	// Вычисляем евклидово расстояние
-	var sum float64
+	var sum float32
 	for i := range vector1 {
 		diff := vector1[i] - vector2[i]
 		sum += diff * diff
 	}
-	distance := math.Sqrt(sum)
+	distance := float32(math.Sqrt(float64(sum))) // Приводим результат к float32
 
 	// Возвращаем true, если расстояние меньше или равно порогу
 	return distance <= d, nil
@@ -60,7 +59,7 @@ func CompareFeatureVectors(vector1, vector2 []float64, d float64) (bool, error) 
 
 
 //ExtractFromModel извлекает вектор из изображения в URL
-func ExtractFromModel(imageURL string) ([]float64, error) {
+func ExtractFromModel(imageURL string) ([]float32, error) {
 
 	// Получаем вектор изображения по URL
 	urlClip := "http://127.0.0.1:5000/extract_features"

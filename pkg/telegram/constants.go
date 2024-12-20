@@ -83,3 +83,5 @@ const (
 	MenuText             = "Меню"
 	PaymentText          = "Оплата"
 )
+
+

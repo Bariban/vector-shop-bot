@@ -30,7 +30,7 @@ func main() {
 		log.Fatal("can't init storage: ", err)
 	}
 
-	bot := telegram.NewBot(botApi, storage, cfg.Messages)
+	bot := telegram.NewBot(botApi, storage, cfg.Messages, cfg.Options)
 
 	if err := bot.Start(); err != nil {
 		log.Fatal(err)

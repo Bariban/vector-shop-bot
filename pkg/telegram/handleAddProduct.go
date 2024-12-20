@@ -18,11 +18,11 @@ func (b *Bot) handleAddProductCmd(message *tgbotapi.Message) error {
 		delete(b.states, chatID)
 		delete(b.tempProduct, chatID)
 	}
-	if b.states[chatID] != stateWaitingForPhoto {
+	if b.states[chatID] == 0 {
 		b.states[chatID] = stateWaitingForPhoto
 		product := &storage.Product{
 			UserName: message.From.UserName,
-			Image:    []*storage.ImageMeta{{}},
+			Image:    []*storage.ImageMeta{},
 		}
 		b.tempProduct[chatID] = product
 		msg := tgbotapi.NewMessage(chatID, b.messages.Responses.SendPhoto)
@@ -33,24 +33,53 @@ func (b *Bot) handleAddProductCmd(message *tgbotapi.Message) error {
 		return fmt.Errorf("product data not initialized for chat: %d", chatID)
 	}
 
-	if len(product.Image) == 0 {
-		product.Image = append(product.Image, &storage.ImageMeta{})
-	}
+	// if len(product.Image) == 0 {
+	// 	product.Image = append(product.Image, &storage.ImageMeta{})
+	// }
 
 	switch b.states[chatID] {
 	case stateWaitingForPhoto:
-		imageMeta, err := b.getFileMeta((*message.Photo)[len(*message.Photo)-1].FileID)
+		b.lastPhotoID = (*message.Photo)[len(*message.Photo)-1].FileID
+		imageMeta, err := b.getFileMeta(b.lastPhotoID)
 		if err != nil {
 			msg := tgbotapi.NewMessage(chatID, "Ошибка обработки фото.")
 			_, _ = b.bot.Send(msg)
 			return err
 		}
-		foundProduct, err := b.getProductsByVector(message, imageMeta.Float)
+
+		// Добавляем новое изображение в список
+		product.Image = append(product.Image, imageMeta)
+
+		b.states[chatID] = stateWaitingForName
+
+		return err
+
+	case stateWaitingForName:
+		// Проверяем, не пришло ли фото вместо текста
+		if message.Text == "" {
+			b.lastPhotoID = (*message.Photo)[len(*message.Photo)-1].FileID
+			imageMeta, err := b.getFileMeta(b.lastPhotoID)
+			if err != nil {
+				msg := tgbotapi.NewMessage(chatID, "Ошибка обработки фото.")
+				_, _ = b.bot.Send(msg)
+				return err
+			}
+
+			// Добавляем новое изображение в список
+			product.Image = append(product.Image, imageMeta)
+
+			b.states[chatID] = stateWaitingForName
+
+			return err
+		}
+
+		foundProduct, err := b.getProductsByVector(message, product.Image)
 		if err != nil {
 			msg := tgbotapi.NewMessage(chatID, "Ошибка обработки фото.")
 			_, _ = b.bot.Send(msg)
 			return err
 		}
+
 		l := len(foundProduct)
 		if l > 0 {
 			var message string
@@ -63,15 +92,22 @@ func (b *Bot) handleAddProductCmd(message *tgbotapi.Message) error {
 			_, _ = b.bot.Send(msg)
 			for _, product := range foundProduct {
 
+				// Получаем изображения для каждого товара
+				images, err := b.storage.GetPhotosByProductID(context.Background(), product.ProductID)
+				if err != nil {
+					log.Printf("не удалось получить фото для продукта %d: %v", product.ProductID, err)
+				}
+				
 				// Отправляем изображения (если есть)
-				for _, photo := range product.Image {
+				for _, image := range images {
 					photoFile := tgbotapi.NewPhotoUpload(chatID, tgbotapi.FileBytes{
 						Name:  fmt.Sprintf("product_%d.jpg", product.ProductID),
-						Bytes: photo.Byte,
+						Bytes: image,
 					})
 					if _, err := b.bot.Send(photoFile); err != nil {
 						log.Printf("не удалось отправить фото: %v", err)
 					}
+					break
 				}
 
 				// Формируем текст с информацией о продукте
@@ -98,18 +134,10 @@ func (b *Bot) handleAddProductCmd(message *tgbotapi.Message) error {
 			}
 			return err
 		}
-
-		product.Image[0].Url = imageMeta.Url
-		product.Image[0].Float = imageMeta.Float
-		b.states[chatID] = stateWaitingForName
-		msg := tgbotapi.NewMessage(chatID, "Введите название товара:")
-		_, err = b.bot.Send(msg)
-		return err
-	case stateWaitingForName:
 		product.Name = message.Text
 		b.states[chatID] = stateWaitingForDescription
 		msg := tgbotapi.NewMessage(chatID, "Введите описание товара:")
-		_, err := b.bot.Send(msg)
+		_, err = b.bot.Send(msg)
 		return err
 
 	case stateWaitingForDescription:
@@ -163,15 +191,27 @@ func (b *Bot) handleAddProductCmd(message *tgbotapi.Message) error {
 		}
 		// Сохраняем изображение в БД
 
-		product.Image[0].Byte, err = b.getFileContent(product.Image[0].Url)
+		for i, _ := range product.Image {
+			product.Image[i].Byte, err = b.getFileContent(product.Image[i].Url)
+			if err != nil {
+				msg := tgbotapi.NewMessage(chatID, "Ошибка обработки содержимого фото.")
+				_, _ = b.bot.Send(msg)
+				return err
+			}
+		}
+
+		p, err := b.storage.SaveImage(context.Background(), product)
 		if err != nil {
-			msg := tgbotapi.NewMessage(chatID, "Ошибка обработки содержимого фото.")
+			msg := tgbotapi.NewMessage(chatID, "Ошибка сохранения фото.")
 			_, _ = b.bot.Send(msg)
 			return err
 		}
-		err = b.storage.SaveImage(context.Background(), product)
+
+		product = p
+
+		err = b.AddVectorToIndex(chatID, product.Image)
 		if err != nil {
-			msg := tgbotapi.NewMessage(chatID, "Ошибка сохранения фото.")
+			msg := tgbotapi.NewMessage(chatID, "Ошибка сохранения вектора в индекс.")
 			_, _ = b.bot.Send(msg)
 			return err
 		}
@@ -182,6 +222,22 @@ func (b *Bot) handleAddProductCmd(message *tgbotapi.Message) error {
 		msg := tgbotapi.NewMessage(chatID, "Товар успешно добавлен!")
 		_, err = b.bot.Send(msg)
 		return err
+	}
+
+	return nil
+}
+
+// AddVectorToIndex добавляет вектор изображения в индекс
+func (b *Bot) AddVectorToIndex(chatID int64, images []*storage.ImageMeta) error {
+	for _, image := range images {
+
+		len := len(image.Float)
+		expectedDim := b.options.VectorExpectedDim
+		if len != expectedDim {
+			return fmt.Errorf("vector dimension mismatch: expected %d, got %d", expectedDim, len)
+		}
+		// Добавляем вектор в индекс
+		b.index[chatID].Add(image.Float, uint32(image.ImageID))
 	}
 
 	return nil

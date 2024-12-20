@@ -12,6 +12,7 @@ import (
 
 	"github.com/Bariban/vector-shop-bot/pkg/recognize"
 	"github.com/Bariban/vector-shop-bot/pkg/storage"
+	hnsw "github.com/Bithack/go-hnsw"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
 	"github.com/shopspring/decimal"
 )
@@ -89,16 +90,7 @@ func (b *Bot) handleCallbackCommand(callback *tgbotapi.CallbackQuery) error {
 
 	switch action {
 	case AddProductCmd:
-		chatID := callback.Message.Chat.ID
-		b.states[chatID] = stateWaitingForPhoto
-		product := &storage.Product{
-			UserName: callback.From.UserName,
-			Image:    []*storage.ImageMeta{{}},
-		}
-		b.tempProduct[chatID] = product
-		msg := tgbotapi.NewMessage(chatID, b.messages.Responses.SendPhoto)
-		_, err := b.bot.Send(msg)
-		return err
+		return b.handleAddProductCmd(callback.Message)
 	case ListCmd:
 		return b.handleProductList(callback)
 	case EditProductCmd:
@@ -230,36 +222,76 @@ func (b *Bot) getFileContent(url string) ([]byte, error) {
 	return byte, nil
 }
 
-func (b *Bot) getProductsByVector(message *tgbotapi.Message, vector []float64) ([]*storage.Product, error) {
-	// Получение всех векторов изображений по имени пользователя
-	images, err := b.storage.GetVectorsByUsername(context.Background(), message.Chat.UserName)
-	if err != nil {
-		return nil, fmt.Errorf("ошибка чтения содержимого файла: %w", err)
+func (b *Bot) getProductsByVector(message *tgbotapi.Message, images []*storage.ImageMeta) ([]*storage.Product, error) {
+	// Карта для уникальных товаров (по productID) и imageID, чтобы избегать дубликатов
+	uniqueProducts := make(map[uint]*storage.Product)
+	processedImageIDs := make(map[uint]bool)
+
+	// Параметры поиска в индексе
+	efSearch := 100 // Параметр точности поиска
+	k := 5          // Количество ближайших соседей
+
+	for _, inputImage := range images {
+		// Проверяем, что вектор не пустой
+		if inputImage.Float == nil {
+			continue
+		}
+
+		// Преобразуем вектор изображения в формат hnsw.Point
+		searchVector := hnsw.Point(inputImage.Float)
+
+		// Ищем ближайших соседей в индексе
+		neighborsQueue := b.index[message.Chat.ID].Search(searchVector, efSearch, k)
+
+		// Извлекаем соседей из очереди
+		for neighborsQueue.Len() > 0 {
+			neighbor := neighborsQueue.Pop()
+
+			neighborID := uint(neighbor.ID)
+
+			if neighborID == 0{
+				continue
+			}
+			// Проверяем, обрабатывали ли мы уже этот imageID
+			if processedImageIDs[neighborID] {
+				continue
+			}
+
+			processedImageIDs[neighborID] = true
+
+			findVector, err := b.storage.GetVectorByImageID(context.Background(), neighborID)
+			if err != nil {
+				return nil, fmt.Errorf("ошибка при поиске вектора: %w", err)
+			}
+			// Сравниваем вектор текущего объекта с вектором соседа
+			isSimilar, err := recognize.CompareFeatureVectors(inputImage.Float, findVector, 0.5)
+			if err != nil {
+				return nil, fmt.Errorf("ошибка при сравнении векторов: %w", err)
+			}
+			if isSimilar {
+				continue
+			}
+
+			// Получаем товар по imageID
+			product, err := b.storage.GetProductByImageID(context.Background(), neighborID)
+			if err != nil {
+				return nil, fmt.Errorf("ошибка получения товара по imageID %d: %w", neighborID, err)
+			}
+			if product == nil {
+				continue
+			}
+
+			// Добавляем товар в карту уникальных товаров, если его там ещё нет
+			if _, exists := uniqueProducts[product.ProductID]; !exists {
+				uniqueProducts[product.ProductID] = product
+			}
+		}
 	}
 
-	var matchedProducts []*storage.Product
-
-	// Сравнение векторов
-	for _, image := range images {
-		ok, err := recognize.CompareFeatureVectors(vector, image.Float, 0.5)
-		if err != nil {
-			return nil, fmt.Errorf("ошибка при сравнении файлов: %w", err)
-		}
-		if ok {
-			// Получение товара по ID изображения
-			product, err := b.storage.GetProductByID(context.Background(), image.ProductID)
-			if err != nil || product == nil {
-				return nil, fmt.Errorf("ошибка получения товара по ID: %w", err)
-			}
-
-			if product.Image == nil {
-				product.Image = make([]*storage.ImageMeta, 0)
-			}
-			product.Image = append(product.Image, image)
-
-			// Добавляем продукт в итоговый список
-			matchedProducts = append(matchedProducts, product)
-		}
+	// Преобразуем карту уникальных товаров в срез
+	matchedProducts := make([]*storage.Product, 0, len(uniqueProducts))
+	for _, product := range uniqueProducts {
+		matchedProducts = append(matchedProducts, product)
 	}
 
 	return matchedProducts, nil
@@ -321,6 +353,7 @@ func (b *Bot) handleProductList(callback *tgbotapi.CallbackQuery) error {
 
 	return nil
 }
+
 func (b *Bot) handleSampleImage(message *tgbotapi.Message) error {
 	chatID := message.Chat.ID
 	if b.states[chatID] != stateWaitingForPhoto {
@@ -330,7 +363,12 @@ func (b *Bot) handleSampleImage(message *tgbotapi.Message) error {
 			_, _ = b.bot.Send(msg)
 			return err
 		}
-		foundProduct, err := b.getProductsByVector(message, imageMeta.Float)
+
+		product := &storage.Product{
+			Image: []*storage.ImageMeta{imageMeta},
+		}
+
+		foundProduct, err := b.getProductsByVector(message, product.Image)
 		if err != nil {
 			msg := tgbotapi.NewMessage(chatID, "Ошибка обработки фото.")
 			_, _ = b.bot.Send(msg)
@@ -414,8 +452,7 @@ func (b *Bot) handleSampleImage(message *tgbotapi.Message) error {
 			return err
 		}
 
-		b.states[chatID] = stateWaitingForName
-		msg := tgbotapi.NewMessage(chatID, "Введите название товара:")
+		msg := tgbotapi.NewMessage(chatID, "Позиция не найдена, попробуйте снова")
 		_, err = b.bot.Send(msg)
 		return err
 	}
