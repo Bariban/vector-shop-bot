@@ -39,10 +39,10 @@ func DecodeVector(encoded string) ([]float64, error) {
 	return vector, nil
 }
 // CompareFeatureVectors сравнивает два вектора и возвращает true, если они сходятся.
-func CompareFeatureVectors(vector1, vector2 []float32, d float32) (bool, error) {
+func CompareFeatureVectors(vector1, vector2 []float32) (float32, error) {
 	// Проверяем, совпадает ли размерность векторов
 	if len(vector1) != len(vector2) {
-		return false, fmt.Errorf("vectors have different dimensions: %d vs %d", len(vector1), len(vector2))
+		return 1, fmt.Errorf("vectors have different dimensions: %d vs %d", len(vector1), len(vector2))
 	}
 
 	// Вычисляем евклидово расстояние
@@ -54,7 +54,7 @@ func CompareFeatureVectors(vector1, vector2 []float32, d float32) (bool, error) 
 	distance := float32(math.Sqrt(float64(sum))) // Приводим результат к float32
 
 	// Возвращаем true, если расстояние меньше или равно порогу
-	return distance <= d, nil
+	return distance, nil
 }
 
 

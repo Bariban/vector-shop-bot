@@ -8,10 +8,11 @@ type Messages struct {
 }
 
 type Responses struct {
-	Start          string `mapstructure:"start"`
-	UnknownCommand string `mapstructure:"unknown_command"`
-	LinkSaved      string `mapstructure:"link_saved"`
-	SendPhoto      string `mapstructure:"send_photo"`
+	Start           string `mapstructure:"start"`
+	UnknownCommand  string `mapstructure:"unknown_command"`
+	LinkSaved       string `mapstructure:"link_saved"`
+	SendPhoto       string `mapstructure:"send_photo"`
+	KeyboardUpdated string `mapstructure:"keyboard_updated"`
 }
 
 type Errors struct {
@@ -21,11 +22,10 @@ type Errors struct {
 }
 
 type Options struct {
-	VectorExpectedDim int `mapstructure:"vector_expected_dim"`
-	VectorEfConstruction int `mapstructure:"vector_ef_construction"`
-	VectorCommunication int `mapstructure:"vector_communication"`
-	VectorIndexFile string `mapstructure:"vector_index_file"`
-	
+	VectorExpectedDim    int    `mapstructure:"vector_expected_dim"`
+	VectorEfConstruction int    `mapstructure:"vector_ef_construction"`
+	VectorCommunication  int    `mapstructure:"vector_communication"`
+	VectorIndexFile      string `mapstructure:"vector_index_file"`
 }
 
 type Config struct {
@@ -36,8 +36,8 @@ type Config struct {
 	BotURL     string `mapstructure:"bot_url"`
 	BoltDBFile string `mapstructure:"db_file"`
 
-	Messages 	Messages
-	Options   	Options
+	Messages Messages
+	Options  Options
 }
 
 func Init() (*Config, error) {

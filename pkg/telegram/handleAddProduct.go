@@ -82,13 +82,13 @@ func (b *Bot) handleAddProductCmd(message *tgbotapi.Message) error {
 
 		l := len(foundProduct)
 		if l > 0 {
-			var message string
+			var str string
 			if l == 1 {
-				message = "❗️ Найден похожий товар"
+				str = "❗️ Найден похожий товар."
 			} else {
-				message = "❗️ Найдены похожие товары"
+				str = "❗️ Найдены похожие товары."
 			}
-			msg := tgbotapi.NewMessage(chatID, message)
+			msg := tgbotapi.NewMessage(chatID, str)
 			_, _ = b.bot.Send(msg)
 			for _, product := range foundProduct {
 
@@ -97,7 +97,7 @@ func (b *Bot) handleAddProductCmd(message *tgbotapi.Message) error {
 				if err != nil {
 					log.Printf("не удалось получить фото для продукта %d: %v", product.ProductID, err)
 				}
-				
+
 				// Отправляем изображения (если есть)
 				for _, image := range images {
 					photoFile := tgbotapi.NewPhotoUpload(chatID, tgbotapi.FileBytes{
@@ -132,8 +132,13 @@ func (b *Bot) handleAddProductCmd(message *tgbotapi.Message) error {
 
 				b.tempMsgID[chatID] = sentMsg.MessageID
 			}
+			product.Name = message.Text
+			b.states[chatID] = stateWaitingForDescription
+			msg = tgbotapi.NewMessage(chatID, "Или введите описание нового товара:")
+			_, err = b.bot.Send(msg)
 			return err
 		}
+
 		product.Name = message.Text
 		b.states[chatID] = stateWaitingForDescription
 		msg := tgbotapi.NewMessage(chatID, "Введите описание товара:")
@@ -141,6 +146,9 @@ func (b *Bot) handleAddProductCmd(message *tgbotapi.Message) error {
 		return err
 
 	case stateWaitingForDescription:
+		if message.Text == "" {
+			return nil
+		}
 		product.Description = message.Text
 		b.states[chatID] = stateWaitingForCount
 		msg := tgbotapi.NewMessage(chatID, "Введите количество товара:")
@@ -148,6 +156,9 @@ func (b *Bot) handleAddProductCmd(message *tgbotapi.Message) error {
 		return err
 
 	case stateWaitingForCount:
+		if message.Text == "" {
+			return nil
+		}
 		count, err := strconv.Atoi(message.Text)
 		if err != nil {
 			msg := tgbotapi.NewMessage(chatID, "Введите корректное количество.")
@@ -161,6 +172,9 @@ func (b *Bot) handleAddProductCmd(message *tgbotapi.Message) error {
 		return err
 
 	case stateWaitingForPurchasePrice:
+		if message.Text == "" {
+			return nil
+		}
 		price, err := decimal.NewFromString(message.Text)
 		if err != nil {
 			msg := tgbotapi.NewMessage(chatID, "Введите корректную цену закупки.")
@@ -174,6 +188,9 @@ func (b *Bot) handleAddProductCmd(message *tgbotapi.Message) error {
 		return err
 
 	case stateWaitingForSellingPrice:
+		if message.Text == "" {
+			return nil
+		}
 		price, err := decimal.NewFromString(message.Text)
 		if err != nil {
 			msg := tgbotapi.NewMessage(chatID, "Введите корректную цену продажи.")

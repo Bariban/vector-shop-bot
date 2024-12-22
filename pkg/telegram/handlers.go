@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 
 	"github.com/Bariban/vector-shop-bot/pkg/recognize"
@@ -146,7 +147,13 @@ func (b *Bot) handleStartTxt(message *tgbotapi.Message) error {
 	buttons.OneTimeKeyboard = false // Клавиатура остается после нажатия
 	buttons.ResizeKeyboard = true   // Клавиатура адаптируется под размер экрана
 
-	msg := tgbotapi.NewMessage(message.Chat.ID, b.messages.Responses.Start)
+	var str string
+	if message.Text == StartCmd {
+		str = b.messages.Responses.Start
+	} else {
+		str = b.messages.Responses.KeyboardUpdated
+	}
+	msg := tgbotapi.NewMessage(message.Chat.ID, str)
 	msg.ReplyMarkup = buttons
 	_, err := b.bot.Send(msg)
 	return err
@@ -225,11 +232,18 @@ func (b *Bot) getFileContent(url string) ([]byte, error) {
 func (b *Bot) getProductsByVector(message *tgbotapi.Message, images []*storage.ImageMeta) ([]*storage.Product, error) {
 	// Карта для уникальных товаров (по productID) и imageID, чтобы избегать дубликатов
 	uniqueProducts := make(map[uint]*storage.Product)
-	processedImageIDs := make(map[uint]bool)
+	distanceImages := make(map[uint]float32)
+
+	type kv struct {
+		Key   uint
+		Value float32
+	}
+
+	var sortedDistanceImages []kv
 
 	// Параметры поиска в индексе
 	efSearch := 100 // Параметр точности поиска
-	k := 5          // Количество ближайших соседей
+	k := 6          // Количество ближайших соседей
 
 	for _, inputImage := range images {
 		// Проверяем, что вектор не пустой
@@ -249,42 +263,52 @@ func (b *Bot) getProductsByVector(message *tgbotapi.Message, images []*storage.I
 
 			neighborID := uint(neighbor.ID)
 
-			if neighborID == 0{
+			if neighborID == 0 {
 				continue
 			}
-			// Проверяем, обрабатывали ли мы уже этот imageID
-			if processedImageIDs[neighborID] {
-				continue
-			}
-
-			processedImageIDs[neighborID] = true
 
 			findVector, err := b.storage.GetVectorByImageID(context.Background(), neighborID)
 			if err != nil {
 				return nil, fmt.Errorf("ошибка при поиске вектора: %w", err)
 			}
 			// Сравниваем вектор текущего объекта с вектором соседа
-			isSimilar, err := recognize.CompareFeatureVectors(inputImage.Float, findVector, 0.5)
+			distance, err := recognize.CompareFeatureVectors(inputImage.Float, findVector)
 			if err != nil {
 				return nil, fmt.Errorf("ошибка при сравнении векторов: %w", err)
 			}
-			if isSimilar {
-				continue
-			}
 
-			// Получаем товар по imageID
-			product, err := b.storage.GetProductByImageID(context.Background(), neighborID)
-			if err != nil {
-				return nil, fmt.Errorf("ошибка получения товара по imageID %d: %w", neighborID, err)
+			if distance <= 35 {
+				distanceImages[neighborID] = distance
 			}
-			if product == nil {
-				continue
-			}
+		}
+	}
 
-			// Добавляем товар в карту уникальных товаров, если его там ещё нет
-			if _, exists := uniqueProducts[product.ProductID]; !exists {
-				uniqueProducts[product.ProductID] = product
-			}
+	for k, v := range distanceImages {
+		sortedDistanceImages = append(sortedDistanceImages, kv{Key: k, Value: v})
+	}
+
+	// Сортируем срез по значениям (Value)
+	sort.Slice(sortedDistanceImages, func(i, j int) bool {
+		return sortedDistanceImages[i].Value < sortedDistanceImages[j].Value
+	})
+
+	// Итерация по отсортированному срезу
+	for i, item := range sortedDistanceImages {
+
+		product, err := b.storage.GetProductByImageID(context.Background(), item.Key)
+		if err != nil {
+			return nil, fmt.Errorf("ошибка получения товара по imageID %d: %w", item.Key, err)
+		}
+		if product == nil {
+			continue
+		}
+
+		// Добавляем товар в карту уникальных товаров, если его там ещё нет
+		if _, exists := uniqueProducts[product.ProductID]; !exists {
+			uniqueProducts[product.ProductID] = product
+		}
+		if i == 1 {
+			break
 		}
 	}
 
@@ -378,15 +402,22 @@ func (b *Bot) handleSampleImage(message *tgbotapi.Message) error {
 		if l > 0 {
 			for _, product := range foundProduct {
 
+				// Получаем изображения для каждого товара
+				images, err := b.storage.GetPhotosByProductID(context.Background(), product.ProductID)
+				if err != nil {
+					log.Printf("не удалось получить фото для продукта %d: %v", product.ProductID, err)
+				}
+
 				// Отправляем изображения (если есть)
-				for _, photo := range product.Image {
+				for _, image := range images {
 					photoFile := tgbotapi.NewPhotoUpload(chatID, tgbotapi.FileBytes{
 						Name:  fmt.Sprintf("product_%d.jpg", product.ProductID),
-						Bytes: photo.Byte,
+						Bytes: image,
 					})
 					if _, err := b.bot.Send(photoFile); err != nil {
 						log.Printf("не удалось отправить фото: %v", err)
 					}
+					break
 				}
 
 				// Формируем текст с информацией о продукте
@@ -408,16 +439,7 @@ func (b *Bot) handleSampleImage(message *tgbotapi.Message) error {
 				b.cartItems[chatID] = cart
 
 				cartItem, exists := b.cartItems[chatID].CartItems[product.ProductID]
-				if exists {
-					if cartItem.CountCart == product.Count {
-						msg := tgbotapi.NewMessage(chatID, "Товар закончился")
-						_, err = b.bot.Send(msg)
-						return err
-					} else {
-						cartItem.CountStore = product.Count
-						cartItem.CountCart++
-					}
-				} else {
+				if !exists {
 					cartItem = CartItem{
 						MsgID:      0,
 						CountStore: product.Count,
@@ -428,21 +450,25 @@ func (b *Bot) handleSampleImage(message *tgbotapi.Message) error {
 				}
 
 				b.cartItems[chatID].CartItems[product.ProductID] = cartItem
-
-				actionsProductKeyboard := b.getProductActionKeyboard(product.ProductID)
-				addProductToCartKeyboard := b.getAddItemToCartKeyboard(product.ProductID)
-
-				mergedKeyboard := tgbotapi.NewInlineKeyboardMarkup(
-					append(actionsProductKeyboard.InlineKeyboard,
-						addProductToCartKeyboard.InlineKeyboard...,
-					)...,
-				)
+				var mergedKeyboard tgbotapi.InlineKeyboardMarkup
+				if cartItem.CountCart > 0 {
+					CountItemInCartKeyboard := b.getCountItemInCartKeyboard(chatID, product.ProductID)
+					mergedKeyboard = CountItemInCartKeyboard
+				} else {
+					actionsProductKeyboard := b.getProductActionKeyboard(product.ProductID)
+					addProductToCartKeyboard := b.getAddItemToCartKeyboard(product.ProductID)
+					mergedKeyboard = tgbotapi.NewInlineKeyboardMarkup(
+						append(actionsProductKeyboard.InlineKeyboard,
+							addProductToCartKeyboard.InlineKeyboard...,
+						)...,
+					)
+				}
 
 				msg := tgbotapi.NewMessage(chatID, productInfo)
 				msg.ParseMode = "Markdown"
 				msg.ReplyMarkup = mergedKeyboard
 
-				_, err := b.bot.Send(msg)
+				_, err = b.bot.Send(msg)
 				if err != nil {
 					log.Printf("не удалось отправить информацию о продукте: %v", err)
 					return err
@@ -467,5 +493,6 @@ func (b *Bot) handleCancelOperations(message *tgbotapi.Message) error {
 	delete(b.cartItems, chatID)
 	delete(b.selectedParams, chatID)
 	delete(b.tempMsgID, chatID)
-	return nil
+	err := b.handleStartTxt(message)
+	return err
 }

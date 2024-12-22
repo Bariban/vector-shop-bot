@@ -3,7 +3,7 @@ db_file: "bot.db"
 bot_url: "https://t.me/getpocket_client_bot"
 
 options:
-  vector_expected_dim: 768
+  vector_expected_dim: 1000
   vector_ef_construction: 200
   vector_communication: 16
   vector_index_file: "hnsw_index.bin"
@@ -14,6 +14,7 @@ messages:
     unknown_command: "Я не знаю такой команды :("
     link_saved: "Ссылка успешно сохранена!"
     send_photo: "Отправьте фото и название товара:"
+    keyboard_updated: "Клавиатура обновлена"
   error:
     default: "Произошла неизвестная ошибка."
 
