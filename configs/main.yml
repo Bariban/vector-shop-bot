@@ -1,12 +1,14 @@
 db_file: "bot.db"
 
 bot_url: "https://t.me/getpocket_client_bot"
+telegram_token: "8015128447:AAHNjRFRjWP1LQ4nqePLtjJhaoiBo6BFIKA"
 
 options:
   vector_expected_dim: 1000
   vector_ef_construction: 200
   vector_communication: 16
   vector_index_file: "hnsw_index.bin"
+
 
 messages:
   response:

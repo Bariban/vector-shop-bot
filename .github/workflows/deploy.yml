@@ -1,0 +1,43 @@
+name: CI/CD
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@v2
+
+      - name: Deploy to Ubuntu server via SSH
+        uses: appleboy/ssh-action@v0.1.3
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSHKEY }}
+          script: |
+            # Перейти в директорию проекта
+            cd /path/to/project
+
+            # Остановить и удалить старый контейнер
+            docker stop myservice || true
+            docker rm myservice || true
+
+            # Удалить старый образ
+            docker rmi myservice:latest || true
+
+            # Set env variables
+            export TOKEN=${{ secrets.TELEGRAM_TOKEN }}
+
+            # Собрать новый образ
+            docker build -t myservice:latest .
+
+            # Запустить новый контейнер
+            docker run -d --restart always \
+              --name myservice \
+              -p 8080:8080 \
+              myservice:latest

@@ -29,9 +29,7 @@ type Options struct {
 }
 
 type Config struct {
-	TelegramToken     string
-	PocketConsumerKey string
-	AuthServerURL     string
+	TelegramToken     string `mapstructure:"telegram_token"`
 
 	BotURL     string `mapstructure:"bot_url"`
 	BoltDBFile string `mapstructure:"db_file"`
@@ -78,15 +76,6 @@ func fromEnv(cfg *Config) error {
 		return err
 	}
 	cfg.TelegramToken = viper.GetString("token")
-
-	if err := viper.BindEnv("consumer_key"); err != nil {
-		return err
-	}
-	cfg.PocketConsumerKey = viper.GetString("consumer_key")
-
-	if err := viper.BindEnv("auth_server_url"); err != nil {
-		return err
-	}
 
 	return nil
 }
