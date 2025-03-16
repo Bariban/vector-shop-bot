@@ -11,7 +11,7 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-func (b *Bot) handleAddProductCmd(message *tgbotapi.Message) error {
+func (b *Bot) procAddProductCmd(message *tgbotapi.Message) error {
 	chatID := message.Chat.ID
 	product := b.tempProduct[chatID]
 	if message.Text == "Добавить товар" {
@@ -21,8 +21,8 @@ func (b *Bot) handleAddProductCmd(message *tgbotapi.Message) error {
 	if b.states[chatID] == 0 {
 		b.states[chatID] = stateWaitingForPhoto
 		product := &storage.Product{
-			UserName: message.From.UserName,
-			Image:    []*storage.ImageMeta{},
+			UserID: uint(message.Chat.ID),
+			Image:  []*storage.ImageMeta{},
 		}
 		b.tempProduct[chatID] = product
 		msg := tgbotapi.NewMessage(chatID, b.messages.Responses.SendPhoto)
@@ -47,8 +47,12 @@ func (b *Bot) handleAddProductCmd(message *tgbotapi.Message) error {
 			return err
 		}
 
-		// Добавляем новое изображение в список
-		product.Image = append(product.Image, imageMeta)
+		if imageMeta.BarCode != "" {
+			product.BarCode = imageMeta.BarCode
+		} else {
+			// Добавляем новое изображение в список
+			product.Image = append(product.Image, imageMeta)
+		}
 
 		b.states[chatID] = stateWaitingForName
 
@@ -65,8 +69,12 @@ func (b *Bot) handleAddProductCmd(message *tgbotapi.Message) error {
 				return err
 			}
 
-			// Добавляем новое изображение в список
-			product.Image = append(product.Image, imageMeta)
+			if imageMeta.BarCode != "" {
+				product.BarCode = imageMeta.BarCode
+			} else {
+				// Добавляем новое изображение в список
+				product.Image = append(product.Image, imageMeta)
+			}
 
 			b.states[chatID] = stateWaitingForName
 
@@ -102,7 +110,7 @@ func (b *Bot) handleAddProductCmd(message *tgbotapi.Message) error {
 				for _, image := range images {
 					photoFile := tgbotapi.NewPhotoUpload(chatID, tgbotapi.FileBytes{
 						Name:  fmt.Sprintf("product_%d.jpg", product.ProductID),
-						Bytes: image,
+						Bytes: image.Byte,
 					})
 					if _, err := b.bot.Send(photoFile); err != nil {
 						log.Printf("не удалось отправить фото: %v", err)
@@ -199,6 +207,8 @@ func (b *Bot) handleAddProductCmd(message *tgbotapi.Message) error {
 		}
 		product.SellingPrice = price
 
+		product.ShopID = b.user[chatID].ShopID
+
 		// Сохраняем продукт в БД
 		product.ProductID, err = b.storage.Save(context.Background(), product)
 		if err != nil {
@@ -208,8 +218,8 @@ func (b *Bot) handleAddProductCmd(message *tgbotapi.Message) error {
 		}
 		// Сохраняем изображение в БД
 
-		for i, _ := range product.Image {
-			product.Image[i].Byte, err = b.getFileContent(product.Image[i].Url)
+		for _, image := range product.Image {
+			image.Byte, err = b.getFileContent(image.Url)
 			if err != nil {
 				msg := tgbotapi.NewMessage(chatID, "Ошибка обработки содержимого фото.")
 				_, _ = b.bot.Send(msg)
@@ -226,7 +236,7 @@ func (b *Bot) handleAddProductCmd(message *tgbotapi.Message) error {
 
 		product = p
 
-		err = b.AddVectorToIndex(chatID, product.Image)
+		err = b.AddVectorToIndex(b.user[chatID].ShopID, product.Image)
 		if err != nil {
 			msg := tgbotapi.NewMessage(chatID, "Ошибка сохранения вектора в индекс.")
 			_, _ = b.bot.Send(msg)
@@ -245,7 +255,7 @@ func (b *Bot) handleAddProductCmd(message *tgbotapi.Message) error {
 }
 
 // AddVectorToIndex добавляет вектор изображения в индекс
-func (b *Bot) AddVectorToIndex(chatID int64, images []*storage.ImageMeta) error {
+func (b *Bot) AddVectorToIndex(shopID uint, images []*storage.ImageMeta) error {
 	for _, image := range images {
 
 		len := len(image.Float)
@@ -254,7 +264,7 @@ func (b *Bot) AddVectorToIndex(chatID int64, images []*storage.ImageMeta) error 
 			return fmt.Errorf("vector dimension mismatch: expected %d, got %d", expectedDim, len)
 		}
 		// Добавляем вектор в индекс
-		b.index[chatID].Add(image.Float, uint32(image.ImageID))
+		b.index[shopID].Add(image.Float, uint32(image.ImageID))
 	}
 
 	return nil

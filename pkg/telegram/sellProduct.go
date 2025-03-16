@@ -21,6 +21,22 @@ func (b *Bot) getAddItemToCartKeyboard(productID uint) tgbotapi.InlineKeyboardMa
 	)
 }
 
+// getPhoneNumberRequestKeyboard возвращает клавиатуру с сохраненя номера телефона
+func (b *Bot) getPhoneNumberRequestKeyboard(chatID int64) tgbotapi.InlineKeyboardMarkup {
+
+	// Создаём кнопки с учётом текущего состояния
+	buttons := []tgbotapi.InlineKeyboardButton{
+		b.generateToggleButton("Да", SavePhoneNumberCmd, chatID),
+		b.generateToggleButton("Нет", DontSavePhoneNumberCmd, chatID),
+	}
+
+	rows := [][]tgbotapi.InlineKeyboardButton{
+		buttons[0:2],
+	}
+
+	return tgbotapi.NewInlineKeyboardMarkup(rows...)
+}
+
 // getProductActionKeyboard возвращает клавиатуру с действиями над товаром
 func (b *Bot) getCountItemInCartKeyboard(chatID int64, productID uint) tgbotapi.InlineKeyboardMarkup {
 	cart := b.cartItems[chatID].CartItems[productID]
@@ -46,7 +62,7 @@ func (b *Bot) getCountItemInCartKeyboard(chatID int64, productID uint) tgbotapi.
 	)
 }
 
-func (b *Bot) handleAddItemToCart(callback *tgbotapi.CallbackQuery) error {
+func (b *Bot) procAddItemToCart(callback *tgbotapi.CallbackQuery) error {
 	chatID := callback.Message.Chat.ID
 	messageID := callback.Message.MessageID
 	product := b.tempProduct[chatID]
@@ -90,7 +106,7 @@ func (b *Bot) handleAddItemToCart(callback *tgbotapi.CallbackQuery) error {
 	return err
 }
 
-func (b *Bot) handleReduceItemInCart(callback *tgbotapi.CallbackQuery) error {
+func (b *Bot) procReduceItemInCart(callback *tgbotapi.CallbackQuery) error {
 	chatID := callback.Message.Chat.ID
 	product := b.tempProduct[chatID]
 
@@ -129,7 +145,7 @@ func (b *Bot) handleReduceItemInCart(callback *tgbotapi.CallbackQuery) error {
 	return err
 }
 
-func (b *Bot) handleDiscoutItemInCart(message *tgbotapi.Message) error {
+func (b *Bot) procDiscoutItemInCart(message *tgbotapi.Message) error {
 	chatID := message.Chat.ID
 	product := b.tempProduct[chatID]
 	state := b.states[chatID]
@@ -199,7 +215,7 @@ func (b *Bot) handleDiscoutItemInCart(message *tgbotapi.Message) error {
 	return err
 }
 
-func (b *Bot) handleEditCountItemInCart(message *tgbotapi.Message) error {
+func (b *Bot) procEditCountItemInCart(message *tgbotapi.Message) error {
 	chatID := message.Chat.ID
 	product := b.tempProduct[chatID]
 	state := b.states[chatID]
@@ -315,7 +331,7 @@ func (b *Bot) handleEditCountItemInCart(message *tgbotapi.Message) error {
 	return err
 }
 
-func (b *Bot) handleRemoveItemFromCart(message *tgbotapi.Message) error {
+func (b *Bot) procRemoveItemFromCart(message *tgbotapi.Message) error {
 	chatID := message.Chat.ID
 	product := b.tempProduct[chatID]
 
@@ -414,13 +430,17 @@ func abs(x int) int {
 	return x
 }
 
-// handleAddOrder сохраняем заказ
-func (b *Bot) handleAddOrder(callback *tgbotapi.CallbackQuery, payType string) error {
+// procAddOrder сохраняем заказ
+func (b *Bot) procAddOrder(callback *tgbotapi.CallbackQuery, payType string) error {
 
 	chatID := callback.Message.Chat.ID
-	cart := b.cartItems[chatID]
 	b.tempMsgID[chatID] = 0
 
+	cart, exists := b.cartItems[chatID]
+	if !exists {
+		b.bot.Send(tgbotapi.NewMessage(chatID, "Корзина не найдена:"))
+		return nil
+	}
 	// Формируем список деталей заказа
 	details := make([]*storage.OrderDetail, 0, len(cart.CartItems))
 	for productID, item := range cart.CartItems {
@@ -435,31 +455,159 @@ func (b *Bot) handleAddOrder(callback *tgbotapi.CallbackQuery, payType string) e
 
 	// Создаём объект заказа
 	order := &storage.Order{
-		UserName: callback.From.UserName,
-		Amount:   cart.Amount,
-		Details:  details,
-		PayType:  &storage.PayType{Description: payType}, // Пример преобразования типа оплаты
+		UserID:     uint(callback.Message.Chat.ID),
+		Amount:     cart.Amount,
+		Details:    details,
+		PayType:    &storage.PayType{Description: payType}, // Пример преобразования типа оплаты
+		ShopID:     b.user[chatID].ShopID,
+		BuersPhone: cart.ClientPhone,
 	}
 
 	// Сохраняем заказ и детали через транзакцию
 	ctx := context.Background()
 	orderID, err := b.storage.AddOrderWithDetails(ctx, order)
+
 	if err != nil {
 		b.bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("Ошибка сохранения заказа: %v", err)))
 		return err
 	}
+
+	cart.OrderID = orderID
+
+	msg := tgbotapi.NewMessage(chatID, "Заказ сохранён")
+
 	// Очистка корзины
 	delete(b.cartItems, chatID)
+	delete(b.states, chatID)
 
-	// Уведомление об успешном сохранении
-	b.bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("Заказ #%d сохранён!", orderID)))
-	return nil
+	_, err = b.bot.Send(msg)
+	if err != nil {
+		b.bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("Ошибка запроса номера телефона: %v", err)))
+		return err
+	}
+
+	return b.procStartTxt(callback.Message)
 }
 
-// handleSelectPayType запрашиваем тип платежа
-func (b *Bot) handleSelectPayType(message *tgbotapi.Message) error {
+// procPhoneRequest запрос на получение номера телефона
+func (b *Bot) procPhoneRequest(message *tgbotapi.Message) error {
 	chatID := message.Chat.ID
-	cart := b.cartItems[chatID]
+
+	_, exists := b.cartItems[chatID]
+	if !exists {
+		b.bot.Send(tgbotapi.NewMessage(chatID, "Корзина не найдена:"))
+		return nil
+	}
+
+	if b.tempMsgID[chatID] != 0 {
+		_, err := b.bot.DeleteMessage(tgbotapi.DeleteMessageConfig{
+			ChatID:    chatID,
+			MessageID: b.tempMsgID[chatID],
+		})
+		delete(b.tempMsgID, chatID)
+
+		if err != nil {
+			return nil
+		}
+	}
+
+	if !b.selectedParams[chatID][SavePhoneNumberCmd] {
+		msg := tgbotapi.NewMessage(chatID, "Введите номер телефона:")
+		m, err := b.bot.Send(msg)
+		if err != nil {
+			return err
+		}
+		b.tempMsgID[chatID] = m.MessageID
+		b.states[chatID] = stateWhatingClientPhone
+	}
+
+	b.selectedParams[chatID][SavePhoneNumberCmd] = true
+	b.selectedParams[chatID][DontSavePhoneNumberCmd] = false
+
+	msg := tgbotapi.NewEditMessageReplyMarkup(chatID, message.MessageID, b.getPhoneNumberRequestKeyboard(chatID))
+	_, err := b.bot.Send(msg)
+
+	return err
+}
+
+// procSaveClientPhone запрос на получение номера телефона
+func (b *Bot) procSaveClientPhone(message *tgbotapi.Message) error {
+	chatID := message.Chat.ID
+
+	cart, exists := b.cartItems[chatID]
+	if !exists {
+		b.bot.Send(tgbotapi.NewMessage(chatID, "Корзина не найдена:"))
+		return nil
+	}
+
+	cart.ClientPhone = message.Text
+	b.cartItems[chatID] = cart
+
+	return b.procSelectPayType(message)
+}
+
+// procPhoneRequestCansel отказ в запроес на получение номера телефона
+func (b *Bot) procPhoneRequestCansel(message *tgbotapi.Message) error {
+	chatID := message.Chat.ID
+	// Удаляем текстовое сообщение
+
+	_, exists := b.cartItems[chatID]
+	if !exists {
+		b.bot.Send(tgbotapi.NewMessage(chatID, "Корзина не найдена:"))
+		return nil
+	}
+
+	if b.tempMsgID[chatID] != 0 {
+		_, err := b.bot.DeleteMessage(tgbotapi.DeleteMessageConfig{
+			ChatID:    chatID,
+			MessageID: b.tempMsgID[chatID],
+		})
+		delete(b.tempMsgID, chatID)
+
+		if err != nil {
+			return nil
+		}
+	}
+
+	b.selectedParams[chatID][SavePhoneNumberCmd] = false
+	b.selectedParams[chatID][DontSavePhoneNumberCmd] = true
+
+	msg := tgbotapi.NewEditMessageReplyMarkup(chatID, message.MessageID, b.getPhoneNumberRequestKeyboard(chatID))
+
+	_, err := b.bot.Send(msg)
+	if err != nil {
+		return nil
+	}
+
+	return b.procSelectPayType(message)
+}
+
+// procSelectPayType запрашиваем тип платежа
+func (b *Bot) procPhoneQuestion(message *tgbotapi.Message) error {
+	chatID := message.Chat.ID
+	delete(b.tempMsgID, chatID)
+	_, exists := b.cartItems[chatID]
+	if !exists {
+		b.bot.Send(tgbotapi.NewMessage(chatID, "Корзина не найдена:"))
+		return nil
+	}
+
+	msg := tgbotapi.NewMessage(chatID, "Оставит ли клиент свой номер телефона?")
+	msg.ParseMode = "Markdown"
+	msg.ReplyMarkup = b.getPhoneNumberRequestKeyboard(chatID)
+
+	_, err := b.bot.Send(msg)
+	return err
+}
+
+// procSelectPayType запрашиваем тип платежа
+func (b *Bot) procSelectPayType(message *tgbotapi.Message) error {
+	chatID := message.Chat.ID
+	cart, exists := b.cartItems[chatID]
+	if !exists {
+		b.bot.Send(tgbotapi.NewMessage(chatID, "Корзина не найдена:"))
+		return nil
+	}
 
 	if cart.Amount.IsZero() {
 		for _, cartItem := range cart.CartItems {
@@ -472,12 +620,27 @@ func (b *Bot) handleSelectPayType(message *tgbotapi.Message) error {
 		}
 	}
 
-	b.cleanUpMessages(chatID, message.MessageID)
+	if b.tempMsgID[chatID] != 0 {
+		_, err := b.bot.DeleteMessage(tgbotapi.DeleteMessageConfig{
+			ChatID:    chatID,
+			MessageID: b.tempMsgID[chatID],
+		})
+		delete(b.tempMsgID, chatID)
+
+		if err != nil {
+			return nil
+		}
+	}
+
+	//b.cleanUpMessages(chatID, message.MessageID)
 	msg := tgbotapi.NewMessage(chatID, "Способ оплаты:")
+
 	msg.ParseMode = "Markdown"
 	msg.ReplyMarkup = b.getPayTypesKeyboard()
 
-	_, err := b.bot.Send(msg)
+	m, err := b.bot.Send(msg)
+	b.tempMsgID[chatID] = m.MessageID
+
 	return err
 }
 

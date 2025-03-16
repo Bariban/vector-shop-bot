@@ -38,11 +38,12 @@ func DecodeVector(encoded string) ([]float64, error) {
 
 	return vector, nil
 }
+
 // CompareFeatureVectors сравнивает два вектора и возвращает true, если они сходятся.
 func CompareFeatureVectors(vector1, vector2 []float32) (float32, error) {
 	// Проверяем, совпадает ли размерность векторов
 	if len(vector1) != len(vector2) {
-		return 1, fmt.Errorf("vectors have different dimensions: %d vs %d", len(vector1), len(vector2))
+		return 100, fmt.Errorf("vectors have different dimensions: %d vs %d", len(vector1), len(vector2))
 	}
 
 	// Вычисляем евклидово расстояние
@@ -59,7 +60,7 @@ func CompareFeatureVectors(vector1, vector2 []float32) (float32, error) {
 
 
 //ExtractFromModel извлекает вектор из изображения в URL
-func ExtractFromModel(imageURL string) ([]float32, error) {
+func ExtractFromModel(imageURL string) ([]float32, string, error) {
 
 	// Получаем вектор изображения по URL
 	urlClip := "http://127.0.0.1:5000/extract_features"
@@ -72,7 +73,7 @@ func ExtractFromModel(imageURL string) ([]float32, error) {
 	// Создание POST запроса
 	req, err := http.NewRequest("POST", urlClip, requestBody)
 	if err != nil {
-		return nil, fmt.Errorf("ошибка создания запроса: %w", err)
+		return nil, "", fmt.Errorf("ошибка создания запроса: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
@@ -80,20 +81,20 @@ func ExtractFromModel(imageURL string) ([]float32, error) {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("ошибка отправки запроса: %w", err)
+		return nil, "", fmt.Errorf("ошибка отправки запроса: %w", err)
 	}
 	defer resp.Body.Close()
 
 	// Чтение ответа
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("ошибка чтения ответа: %w", err)
+		return nil, "", fmt.Errorf("ошибка чтения ответа: %w", err)
 	}
 
 	// Обработка JSON ответа
 	var response Response
 	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, fmt.Errorf("ошибка разбора JSON ответа: %w", err)
+		return nil, "", fmt.Errorf("ошибка разбора JSON ответа: %w", err)
 	}
 
 	// Вывод полученных данных
@@ -101,5 +102,5 @@ func ExtractFromModel(imageURL string) ([]float32, error) {
 	// fmt.Println("Извлеченный текст:", response.ExtractedText)
 	// fmt.Println("Признаки изображения:", response.Features)
 	// fmt.Println("Сходство с категориями:", response.Similarities)
-	return response.Features, nil
+	return response.Features, response.BarCode, nil
 }

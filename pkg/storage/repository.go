@@ -27,13 +27,15 @@ var ErrNoSavedProducts = errors.New("no saved Products")
 
 type Product struct {
 	ProductID     uint
-	UserName      string
+	ShopID        uint
+	UserID        uint
 	Name          string
 	Description   string
 	Count         uint
 	PurchasePrice decimal.Decimal
 	SellingPrice  decimal.Decimal
 	Image         []*ImageMeta
+	BarCode       string
 }
 
 type ImageMeta struct {
@@ -42,11 +44,13 @@ type ImageMeta struct {
 	Byte      []byte
 	Float     []float32
 	Url       string
+	BarCode   string
 }
 
 type Order struct {
 	ID         uint
-	UserName   string
+	UserID     uint
+	ShopID     uint
 	Amount     decimal.Decimal
 	Date       *time.Time
 	PayType    *PayType
@@ -70,8 +74,18 @@ type OrderDetail struct {
 }
 
 type Market struct {
-	ID uint
-	Name string
+	ID          uint
+	Name        string
 	Description string
-	Locate string
+	Locate      string
+}
+
+type User struct {
+	FirstName string
+	LastName  string
+	UserName  string
+	UserID    uint
+	ShopName  string
+	ShopID    uint
+	Role      string
 }

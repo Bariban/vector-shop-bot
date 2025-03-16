@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,10 +11,11 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 
+	hnsw "github.com/Bariban/go-hnsw"
 	"github.com/Bariban/vector-shop-bot/pkg/recognize"
 	"github.com/Bariban/vector-shop-bot/pkg/storage"
-	hnsw "github.com/Bithack/go-hnsw"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
 	"github.com/shopspring/decimal"
 )
@@ -33,37 +35,50 @@ func (b *Bot) handleMessageCommand(message *tgbotapi.Message) error {
 	state := b.states[chatID]
 	switch message.Text {
 	case StartCmd:
-		return b.handleStartTxt(message)
+		return b.procStartTxt(message)
 	case AddProductText:
-		return b.handleAddProductCmd(message)
+		return b.procAddProductCmd(message)
 	case PaymentText:
-		return b.handleSelectPayType(message)
+		return b.procPhoneQuestion(message)
 	case CancelOperationsText:
-		return b.handleCancelOperations(message)
-	// case MenuText:
-	// 	return b.handleMenu(message)
+		return b.procCancelOperations(message)
+	case MenuText:
+		return b.procGetMenu(message)
 	default:
 		if addProductStates[state] {
-			return b.handleAddProductCmd(message)
+			return b.procAddProductCmd(message)
 		}
 
 		if editProductStates[state] {
-			return b.handleConfirmEdit(message)
+			return b.procConfirmEdit(message)
 		}
 
 		if message.Photo != nil {
-			return b.handleSampleImage(message)
+			return b.procSampleImage(message)
 		}
 
 		if state == stateEditCountItemInCart {
-			return b.handleEditCountItemInCart(message)
+			return b.procEditCountItemInCart(message)
 		}
 
 		if state == stateDiscountProductInCart {
-			return b.handleDiscoutItemInCart(message)
+			return b.procDiscoutItemInCart(message)
 		}
 
-		return b.handleUnknownCmd(message)
+		if state == stateEditShopName {
+			return b.procEditShopName(message)
+		}
+
+		if state == stateWhatingClientPhone {
+			return b.procSaveClientPhone(message)
+		}
+
+		//Старт с реферальной ссылкой
+		if strings.HasPrefix(message.Text, StartWithPayloadCmd) {
+			return b.procStartArgCmd(message)
+		}
+
+		return b.procUnknownCmd(message)
 	}
 
 }
@@ -71,70 +86,113 @@ func (b *Bot) handleMessageCommand(message *tgbotapi.Message) error {
 func (b *Bot) handleCallbackCommand(callback *tgbotapi.CallbackQuery) error {
 	chatID := callback.Message.Chat.ID
 	action := callback.Data
-	var productID int
 	// Регулярное выражение для поиска числа в конце строки
 	re := regexp.MustCompile(`\d+$`)
 	match := re.FindString(action)
-
+	intMatch, _ := strconv.Atoi(match)
 	// Преобразуем найденное число в uint
 	if match != "" {
-		productID, _ = strconv.Atoi(match)
 		// Определяем действие (до числа)
-		product := &storage.Product{
-			ProductID: uint(productID),
-			UserName:  callback.From.UserName,
-			Image:     []*storage.ImageMeta{{}},
-		}
-		b.tempProduct[chatID] = product
 		action = action[:len(action)-len(match)-1]
+		if action != EditUserCmd {
+			product := &storage.Product{
+				ProductID: uint(intMatch),
+				UserID:    uint(callback.Message.Chat.ID),
+				Image:     []*storage.ImageMeta{{}},
+			}
+			b.tempProduct[chatID] = product
+
+			if _, ok := b.selectedParams[callback.Message.Chat.ID]; !ok {
+				b.selectedParams[callback.Message.Chat.ID] = make(map[string]bool)
+			}
+			//b.selectedParams[callback.Message.Chat.ID][action] = true
+		}
 	}
 
 	switch action {
 	case AddProductCmd:
-		return b.handleAddProductCmd(callback.Message)
+		return b.procAddProductCmd(callback.Message)
 	case ListCmd:
-		return b.handleProductList(callback)
+		return b.procProductList(callback)
 	case EditProductCmd:
-		return b.handleEditProductCmd(callback)
+		return b.procEditProductCmd(callback, action)
 	case ConfirmDelProductCmd:
-		return b.handleConfirmDeleteProductCmd(callback)
+		return b.procConfirmDeleteProductCmd(callback)
+	case ConfirmDelImageCmd:
+		return b.procConfirmDeleteImageCmd(callback, uint(intMatch))
+	case DelImageCmd:
+		return b.procDeleteImageCmd(callback, uint(intMatch))
 	case DelProductCmd:
-		return b.handleDeleteProductCmd(callback)
+		return b.procDeleteProductCmd(callback)
 	case ActionsProductCmd:
-		return b.handleActionsProductmd(callback)
+		return b.procActionsProductCmd(callback)
+	case ActionsImagesCmd:
+		return b.procActionsImagesCmd(callback, uint(intMatch))
+	case FinishEditImagesCmd:
+		return b.procFinisEditImages(callback.Message)
+
 	case EditProductNameCmd:
-		b.selectedParams[callback.Message.Chat.ID][action] = true
-		return b.handleEditProductCmd(callback)
+		return b.procEditProductCmd(callback, action)
 	case EditProductCountCmd:
-		b.selectedParams[callback.Message.Chat.ID][action] = true
-		return b.handleEditProductCmd(callback)
+		return b.procEditProductCmd(callback, action)
 	case EditProductPurchaseCmd:
-		b.selectedParams[callback.Message.Chat.ID][action] = true
-		return b.handleEditProductCmd(callback)
+		return b.procEditProductCmd(callback, action)
 	case EditProductSellingCmd:
-		b.selectedParams[callback.Message.Chat.ID][action] = true
-		return b.handleEditProductCmd(callback)
+		return b.procEditProductCmd(callback, action)
+	case EditProductDescriptionCmd:
+		return b.procEditProductCmd(callback, action)
+	case EditProductImagesCmd:
+		return b.procEditProductCmd(callback, action)
 	case ConfirmEditProductCmd:
-		return b.handleConfirmEdit(callback.Message)
+		return b.procConfirmEdit(callback.Message)
 	case AddItemToCartCmd:
-		return b.handleAddItemToCart(callback)
+
+		return b.procAddItemToCart(callback)
 	case ReduceItemInCartCmd:
-		return b.handleReduceItemInCart(callback)
+		return b.procReduceItemInCart(callback)
 	case EditCountItemInCartCmd:
-		return b.handleEditCountItemInCart(callback.Message)
+		return b.procEditCountItemInCart(callback.Message)
 	case DiscountItemInCartCmd:
-		return b.handleDiscoutItemInCart(callback.Message)
+		return b.procDiscoutItemInCart(callback.Message)
 	case RemoveItemFromCartCmd:
-		return b.handleRemoveItemFromCart(callback.Message)
+		return b.procRemoveItemFromCart(callback.Message)
 	case PayTypeCashCmd:
-		return b.handleAddOrder(callback, action)
+		return b.procAddOrder(callback, action)
+	case ShopKeyboardCmd:
+		return b.procShopKeyboard(callback.Message)
+	case EditShopKeyboardCmd:
+		return b.procEditShopKeyboard(callback.Message)
+	case MenuCmd:
+		return b.procGetMenu(callback.Message)
+	case EditShopNameCmd:
+		return b.procEditShopName(callback.Message)
+	case InviteUsersCmd:
+		return b.procInviteUsersKeyboard(callback.Message)
+	case InviteEmployeeCmd:
+		return b.procInviteEmployee(callback.Message)
+	case InviteClientCmd:
+		return b.procInviteClient(callback.Message)
+	case UserListCmd:
+		return b.procGetShopUsers(callback.Message)
+	case EditUserCmd:
+		return b.procEditShopUser(callback.Message, uint(intMatch))
+	case GrantRoleCustomerCmd:
+		return b.procGrantRoleCustomer(callback.Message, uint(intMatch))
+	case GrantRoleEmployeeCmd:
+		return b.procGrantRoleEmployee(callback.Message, uint(intMatch))
+	case GrantRoleClientCmd:
+		return b.procGrantRoleClient(callback.Message, uint(intMatch))
+	case SavePhoneNumberCmd:
+		return b.procPhoneRequest(callback.Message)
+	case DontSavePhoneNumberCmd:
+		return b.procPhoneRequestCansel(callback.Message)
 
 	default:
 		return nil
 	}
 }
 
-func (b *Bot) handleStartTxt(message *tgbotapi.Message) error {
+func (b *Bot) procStartTxt(message *tgbotapi.Message) error {
 	buttons := tgbotapi.NewReplyKeyboard(
 		tgbotapi.NewKeyboardButtonRow(
 			tgbotapi.NewKeyboardButton("Добавить товар"),
@@ -159,19 +217,107 @@ func (b *Bot) handleStartTxt(message *tgbotapi.Message) error {
 	return err
 }
 
-func (b *Bot) handleUnknownCmd(message *tgbotapi.Message) error {
+func (b *Bot) procStartArgCmd(message *tgbotapi.Message) error {
+
+	chatID := message.Chat.ID
+	args := message.CommandArguments() // Аргументы после /start
+
+	// Если аргументы переданы
+	if args != "" {
+		// Раскодируем payload
+		payload, err := base64.URLEncoding.DecodeString(args)
+		if err != nil {
+			b.bot.Send(tgbotapi.NewMessage(chatID, "Неверная ссылка!"))
+			return err
+		}
+
+		// Разбираем payload (например, "123|roleEmployee")
+		parts := strings.Split(string(payload), "|")
+		if len(parts) != 2 {
+			b.bot.Send(tgbotapi.NewMessage(chatID, "Ошибка в ссылке приглашения!"))
+			return fmt.Errorf("invalid payload format")
+		}
+
+		shopID, err := strconv.Atoi(parts[0])
+		if err != nil {
+			b.bot.Send(tgbotapi.NewMessage(chatID, "Некорректный идентификатор магазина!"))
+			return err
+		}
+
+		role := parts[1]
+		if role != roleCustomer && role != roleEmployee && role != roleClient {
+			b.bot.Send(tgbotapi.NewMessage(chatID, "Некорректная роль!"))
+			return fmt.Errorf("invalid role")
+		}
+
+		shopName, err := b.storage.GetShopName(context.Background(), shopID)
+		if err != nil {
+			b.bot.Send(tgbotapi.NewMessage(chatID, "Не удалось найти магазин!"))
+			return err
+		}
+
+		// Создаём или обновляем пользователя
+		user := &storage.User{
+			FirstName: message.Chat.FirstName,
+			LastName:  message.Chat.LastName,
+			UserName:  message.From.UserName,
+			UserID:    uint(message.Chat.ID),
+			ShopID:    uint(shopID),
+			Role:      role,
+			ShopName:  shopName,
+		}
+
+		// Сохраняем пользователя в базе данных
+		err = b.storage.InitUser(user)
+		if err != nil {
+			b.bot.Send(tgbotapi.NewMessage(chatID, "Не удалось зарегистрировать пользователя."))
+			return err
+		}
+
+		b.user[chatID] = user
+
+		// Ответ пользователю
+		b.bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("Добро пожаловать в магазин %s!", shopName)))
+		if role == roleEmployee {
+			b.bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("Вам присвоена роль сотрудника")))
+		}
+
+	} else {
+		// Стандартное приветствие для обычного /start без параметров
+		b.bot.Send(tgbotapi.NewMessage(chatID, "Добро пожаловать в нашего бота!"))
+	}
+	return nil
+}
+
+func (b *Bot) procUnknownCmd(message *tgbotapi.Message) error {
 	msg := tgbotapi.NewMessage(message.Chat.ID, b.messages.Responses.UnknownCommand)
 	_, err := b.bot.Send(msg)
 	return err
 }
 
-func (b *Bot) handleActionsProductmd(callback *tgbotapi.CallbackQuery) error {
+// procActionsProductCmd возвращаем исходную клавиатуру для товара
+func (b *Bot) procActionsProductCmd(callback *tgbotapi.CallbackQuery) error {
 	chatID := callback.Message.Chat.ID
 	product := b.tempProduct[chatID]
 
-	buttonDone := b.getProductActionKeyboard(product.ProductID)
+	actionsProductKeyboard := b.getProductActionKeyboard(product.ProductID)
+	addProductToCartKeyboard := b.getAddItemToCartKeyboard(product.ProductID)
+	mergedKeyboard := tgbotapi.NewInlineKeyboardMarkup(
+		append(actionsProductKeyboard.InlineKeyboard,
+			addProductToCartKeyboard.InlineKeyboard...,
+		)...,
+	)
 
-	msg := tgbotapi.NewEditMessageReplyMarkup(chatID, b.tempMsgID[chatID], buttonDone)
+	msg := tgbotapi.NewEditMessageReplyMarkup(chatID, callback.Message.MessageID, mergedKeyboard)
+	_, err := b.bot.Send(msg)
+	return err
+}
+
+// procActionsImagesCmd возвращаем исходную клавиатуру для изображения
+func (b *Bot) procActionsImagesCmd(callback *tgbotapi.CallbackQuery, imageID uint) error {
+	chatID := callback.Message.Chat.ID
+
+	msg := tgbotapi.NewEditMessageReplyMarkup(chatID, callback.Message.MessageID, getImageActionKeyboard(imageID))
 	_, err := b.bot.Send(msg)
 	return err
 }
@@ -203,14 +349,14 @@ func (b *Bot) getFileMeta(fileID string) (*storage.ImageMeta, error) {
 	// Генерируем URL для скачивания файла
 	imageMeta.Url = fmt.Sprintf("https://api.telegram.org/file/bot%s/%s", "8015128447:AAHNjRFRjWP1LQ4nqePLtjJhaoiBo6BFIKA", result.Result.FilePath) //TODO cfg.TelegramToken
 
-	imageMeta.Float, err = recognize.ExtractFromModel(imageMeta.Url)
+	imageMeta.Float, imageMeta.BarCode, err = recognize.ExtractFromModel(imageMeta.Url)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка при получении вектора файла: %w", err)
 	}
 	return imageMeta, nil
 }
 
-// getFileMeta получает контент из URL
+// getFileContent получает контент из URL
 func (b *Bot) getFileContent(url string) ([]byte, error) {
 
 	// Скачиваем файл
@@ -255,7 +401,7 @@ func (b *Bot) getProductsByVector(message *tgbotapi.Message, images []*storage.I
 		searchVector := hnsw.Point(inputImage.Float)
 
 		// Ищем ближайших соседей в индексе
-		neighborsQueue := b.index[message.Chat.ID].Search(searchVector, efSearch, k)
+		neighborsQueue := b.index[b.user[message.Chat.ID].ShopID].Search(searchVector, efSearch, k)
 
 		// Извлекаем соседей из очереди
 		for neighborsQueue.Len() > 0 {
@@ -321,12 +467,11 @@ func (b *Bot) getProductsByVector(message *tgbotapi.Message, images []*storage.I
 	return matchedProducts, nil
 }
 
-func (b *Bot) handleProductList(callback *tgbotapi.CallbackQuery) error {
+func (b *Bot) procProductList(callback *tgbotapi.CallbackQuery) error {
 	chatID := callback.Message.Chat.ID
-	userName := callback.From.UserName
 
 	// Получаем список продуктов для пользователя
-	products, err := b.storage.GetProducts(context.Background(), userName)
+	products, err := b.storage.GetProducts(context.Background(), b.user[chatID].ShopID)
 	if err != nil {
 		msg := tgbotapi.NewMessage(chatID, "Не удалось получить список продуктов. Попробуйте позже.")
 		_, _ = b.bot.Send(msg)
@@ -352,7 +497,7 @@ func (b *Bot) handleProductList(callback *tgbotapi.CallbackQuery) error {
 		for _, photo := range photos {
 			photoFile := tgbotapi.NewPhotoUpload(chatID, tgbotapi.FileBytes{
 				Name:  fmt.Sprintf("product_%d.jpg", product.ProductID),
-				Bytes: photo,
+				Bytes: photo.Byte,
 			})
 			if _, err := b.bot.Send(photoFile); err != nil {
 				log.Printf("не удалось отправить фото: %v", err)
@@ -378,7 +523,7 @@ func (b *Bot) handleProductList(callback *tgbotapi.CallbackQuery) error {
 	return nil
 }
 
-func (b *Bot) handleSampleImage(message *tgbotapi.Message) error {
+func (b *Bot) procSampleImage(message *tgbotapi.Message) error {
 	chatID := message.Chat.ID
 	if b.states[chatID] != stateWaitingForPhoto {
 		imageMeta, err := b.getFileMeta((*message.Photo)[len(*message.Photo)-1].FileID)
@@ -388,16 +533,22 @@ func (b *Bot) handleSampleImage(message *tgbotapi.Message) error {
 			return err
 		}
 
-		product := &storage.Product{
-			Image: []*storage.ImageMeta{imageMeta},
+		var foundProduct []*storage.Product
+		if imageMeta.BarCode != "" {
+			foundProduct, err = b.storage.GetProductsByBarCode(context.Background(), b.user[chatID].ShopID, imageMeta.BarCode)
+		} else {
+			product := &storage.Product{
+				Image: []*storage.ImageMeta{imageMeta},
+			}
+
+			foundProduct, err = b.getProductsByVector(message, product.Image)
+			if err != nil {
+				msg := tgbotapi.NewMessage(chatID, "Ошибка обработки фото.")
+				_, _ = b.bot.Send(msg)
+				return err
+			}
 		}
 
-		foundProduct, err := b.getProductsByVector(message, product.Image)
-		if err != nil {
-			msg := tgbotapi.NewMessage(chatID, "Ошибка обработки фото.")
-			_, _ = b.bot.Send(msg)
-			return err
-		}
 		l := len(foundProduct)
 		if l > 0 {
 			for _, product := range foundProduct {
@@ -412,7 +563,7 @@ func (b *Bot) handleSampleImage(message *tgbotapi.Message) error {
 				for _, image := range images {
 					photoFile := tgbotapi.NewPhotoUpload(chatID, tgbotapi.FileBytes{
 						Name:  fmt.Sprintf("product_%d.jpg", product.ProductID),
-						Bytes: image,
+						Bytes: image.Byte,
 					})
 					if _, err := b.bot.Send(photoFile); err != nil {
 						log.Printf("не удалось отправить фото: %v", err)
@@ -445,6 +596,15 @@ func (b *Bot) handleSampleImage(message *tgbotapi.Message) error {
 						CountStore: product.Count,
 						CountCart:  0,
 						Price:      product.SellingPrice,
+						PriceStore: product.SellingPrice,
+					}
+				} else {
+					cartItem = CartItem{
+						MsgID:     cartItem.MsgID,
+						CountCart: cartItem.CountCart,
+						Price:     cartItem.Price,
+
+						CountStore: product.Count,
 						PriceStore: product.SellingPrice,
 					}
 				}
@@ -485,7 +645,7 @@ func (b *Bot) handleSampleImage(message *tgbotapi.Message) error {
 	return nil
 }
 
-func (b *Bot) handleCancelOperations(message *tgbotapi.Message) error {
+func (b *Bot) procCancelOperations(message *tgbotapi.Message) error {
 	chatID := message.Chat.ID
 
 	delete(b.states, chatID)
@@ -493,6 +653,6 @@ func (b *Bot) handleCancelOperations(message *tgbotapi.Message) error {
 	delete(b.cartItems, chatID)
 	delete(b.selectedParams, chatID)
 	delete(b.tempMsgID, chatID)
-	err := b.handleStartTxt(message)
+	err := b.procStartTxt(message)
 	return err
 }

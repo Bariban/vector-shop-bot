@@ -20,6 +20,7 @@ type Storage struct {
 	db *sql.DB
 }
 
+
 // New создает новое подключение к PostgreSQL.
 func New() (*Storage, error) {
 	connStr := "postgresql://postgres:admin@localhost:5432/vectorshop_db?sslmode=disable" // Укажите правильные креды
@@ -37,11 +38,19 @@ func New() (*Storage, error) {
 
 // Save сохраняет продукт в базе данных.
 func (s *Storage) Save(ctx context.Context, p *storage.Product) (uint, error) {
-	q := `INSERT INTO Products (user_name, name, description, count, purchase_price, selling_price) 
-		  VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`
+	q := `INSERT INTO Products (user_id, name, description, count, purchase_price, selling_price, shop_id, bar_code) 
+		  VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`
 
 	var ID uint
-	err := s.db.QueryRowContext(ctx, q, p.UserName, p.Name, p.Description, p.Count, p.PurchasePrice.String(), p.SellingPrice.String()).Scan(&ID)
+	err := s.db.QueryRowContext(ctx, q,
+		p.UserID,
+		p.Name,
+		p.Description,
+		p.Count,
+		p.PurchasePrice.String(),
+		p.SellingPrice.String(),
+		p.ShopID,
+		p.BarCode).Scan(&ID)
 	if err != nil {
 		return 0, fmt.Errorf("can't save product: %w", err)
 	}
@@ -59,9 +68,9 @@ func (s *Storage) AddOrderWithDetails(ctx context.Context, order *storage.Order)
 
 	// Вставляем заказ
 	orderID := uint(0)
-	queryOrder := `INSERT INTO Orders (username, amount, pay_type_id, buyers_phone) 
-                   VALUES ($1, $2, $3, $4) RETURNING id`
-	err = tx.QueryRowContext(ctx, queryOrder, order.UserName, order.Amount, order.PayType.ID, order.BuersPhone).Scan(&orderID)
+	queryOrder := `INSERT INTO Orders (user_id, amount, pay_type_id, buyers_phone, shop_id) 
+                   VALUES ($1, $2, $3, $4, $5) RETURNING id`
+	err = tx.QueryRowContext(ctx, queryOrder, order.UserID, order.Amount, order.PayType.ID, order.BuersPhone, order.ShopID).Scan(&orderID)
 	if err != nil {
 		tx.Rollback() // Откат транзакции
 		return 0, fmt.Errorf("не удалось сохранить заказ: %w", err)
@@ -110,27 +119,42 @@ func (s *Storage) UpdateProductField(ctx context.Context, productID uint, field 
 	return nil
 }
 
+// UpdateShopField обновляет параметр магазина
+func (s *Storage) UpdateShopField(ctx context.Context, shopID uint, field string, value interface{}) error {
+	query := fmt.Sprintf("UPDATE shops SET %s = $1 WHERE id = $2", field)
+	_, err := s.db.ExecContext(ctx, query, value, shopID)
+	if err != nil {
+		return fmt.Errorf("ошибка обновления поля %s: %w", field, err)
+	}
+	return nil
+}
+
 // SaveImage добавляет изображение в таблицу Images, привязывая его к товару по product_id.
 func (s *Storage) SaveImage(ctx context.Context, p *storage.Product) (*storage.Product, error) {
-	q := `INSERT INTO Images (product_id, username, blob_content, vector) 
-          VALUES ($1, $2, $3, $4) RETURNING id`
+	q := `INSERT INTO Images (product_id, user_id, blob_content, vector, shop_id) 
+          VALUES ($1, $2, $3, $4, $5) RETURNING id`
 
 	for i, image := range p.Image {
+		if image.Float == nil {continue}
 		var imageID uint
-		err := s.db.QueryRowContext(ctx, q, p.ProductID, p.UserName, image.Byte, float32SliceToString(image.Float)).Scan(&imageID)
+		err := s.db.QueryRowContext(ctx, q,
+			p.ProductID,
+			p.UserID,
+			image.Byte,
+			float32SliceToString(image.Float),
+			p.ShopID).Scan(&imageID)
 		if err != nil {
 			return nil, fmt.Errorf("can't save photo: %w", err)
 		}
-		p.Image[i].ImageID = imageID 
+		p.Image[i].ImageID = imageID
 	}
 
 	return p, nil
 }
 
-
 // GetPhotosByProductID возвращает список байтовых массивов (контентов фото) для указанного productID.
-func (s *Storage) GetPhotosByProductID(ctx context.Context, productID uint) ([][]byte, error) {
-	q := `SELECT blob_content FROM Images WHERE product_id = $1`
+func (s *Storage) GetPhotosByProductID(ctx context.Context, productID uint) ([]storage.ImageMeta, error) {
+	q := `SELECT id, blob_content  FROM Images WHERE product_id = $1`
 
 	rows, err := s.db.QueryContext(ctx, q, productID)
 	if err != nil {
@@ -138,17 +162,16 @@ func (s *Storage) GetPhotosByProductID(ctx context.Context, productID uint) ([][
 		return nil, fmt.Errorf("can't get photos for product: %w", err)
 	}
 	defer rows.Close()
-
-	var photos [][]byte
+	var images []storage.ImageMeta
 	for rows.Next() {
-		var content []byte
-		if err := rows.Scan(&content); err != nil {
+		var image storage.ImageMeta		
+		if err := rows.Scan(&image.ImageID, &image.Byte); err != nil {
 			return nil, fmt.Errorf("can't scan photo content: %w", err)
 		}
-		photos = append(photos, content)
+		images = append(images, image)
 	}
 
-	return photos, nil
+	return images, nil
 }
 
 // GetPhotosByImageID возвращает список байтовых массивов (контентов фото) для указанного ImageID.
@@ -168,22 +191,21 @@ func (s *Storage) GetVectorByImageID(ctx context.Context, ImageID uint) ([]float
 			return nil, fmt.Errorf("can't scan photo content: %w", err)
 		}
 	}
-	
+
 	float32Vector, err := stringToFloat32Slice(vectorStr)
-	if err != nil{
+	if err != nil {
 		return nil, fmt.Errorf("can't stringToFloat32Slice: %w", err)
 	}
 
 	return float32Vector, nil
 }
 
-
 // GetProducts возвращает список продуктов по имени пользователя.
-func (s *Storage) GetProducts(ctx context.Context, userName string) ([]*storage.Product, error) {
+func (s *Storage) GetProducts(ctx context.Context, shopID uint) ([]*storage.Product, error) {
 	q := `SELECT id, user_name, name, description, count, purchase_price, selling_price 
-	      FROM Products WHERE user_name = $1`
+	      FROM Products WHERE shop_id = $1`
 
-	rows, err := s.db.QueryContext(ctx, q, userName)
+	rows, err := s.db.QueryContext(ctx, q, shopID)
 	if err != nil {
 		return nil, fmt.Errorf("can't get products by user: %w", err)
 	}
@@ -195,7 +217,39 @@ func (s *Storage) GetProducts(ctx context.Context, userName string) ([]*storage.
 		var purchasePrice, sellingPrice string
 
 		err := rows.Scan(
-			&p.ProductID, &p.UserName, &p.Name, &p.Description, &p.Count, &purchasePrice, &sellingPrice,
+			&p.ProductID, &p.UserID, &p.Name, &p.Description, &p.Count, &purchasePrice, &sellingPrice,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("can't scan product row: %w", err)
+		}
+
+		p.PurchasePrice, _ = decimal.NewFromString(purchasePrice)
+		p.SellingPrice, _ = decimal.NewFromString(sellingPrice)
+
+		products = append(products, &p)
+	}
+
+	return products, nil
+}
+
+// GetProductsByBarCode возвращает список продуктов по имени пользователя по штрихкоду.
+func (s *Storage) GetProductsByBarCode(ctx context.Context, shopID uint, barCode string) ([]*storage.Product, error) {
+	q := `SELECT id, name, description, count, purchase_price, selling_price 
+	      FROM Products WHERE shop_id = $1 and bar_code = $2`
+
+	rows, err := s.db.QueryContext(ctx, q, shopID, barCode)
+	if err != nil {
+		return nil, fmt.Errorf("can't get products by user: %w", err)
+	}
+	defer rows.Close()
+
+	var products []*storage.Product
+	for rows.Next() {
+		var p storage.Product
+		var purchasePrice, sellingPrice string
+
+		err := rows.Scan(
+			&p.ProductID, &p.Name, &p.Description, &p.Count, &purchasePrice, &sellingPrice,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("can't scan product row: %w", err)
@@ -211,14 +265,14 @@ func (s *Storage) GetProducts(ctx context.Context, userName string) ([]*storage.
 }
 
 func (s *Storage) GetProductByID(ctx context.Context, productID uint) (*storage.Product, error) {
-	query := `SELECT id, user_name, name, description, count, purchase_price, selling_price 
+	query := `SELECT id, user_id, name, description, count, purchase_price, selling_price 
               FROM products WHERE id = $1`
 	row := s.db.QueryRowContext(ctx, query, productID)
 
 	product := &storage.Product{}
 	err := row.Scan(
 		&product.ProductID,
-		&product.UserName,
+		&product.UserID,
 		&product.Name,
 		&product.Description,
 		&product.Count,
@@ -236,7 +290,7 @@ func (s *Storage) GetProductByID(ctx context.Context, productID uint) (*storage.
 }
 
 // Remove удаляет продукт из базы данных.
-func (s *Storage) Remove(ctx context.Context, productID uint) error {
+func (s *Storage) RemoveProduct(ctx context.Context, productID uint) error {
 	q := `DELETE FROM Products WHERE id = $1`
 
 	_, err := s.db.ExecContext(ctx, q, productID)
@@ -248,6 +302,19 @@ func (s *Storage) Remove(ctx context.Context, productID uint) error {
 	_, err = s.db.ExecContext(ctx, q, productID)
 	if err != nil {
 		return fmt.Errorf("can't remove product images: %w", err)
+	}
+
+	return nil
+}
+
+// Remove удаляет продукт из базы данных.
+func (s *Storage) DeleteImage(ctx context.Context, imageID uint) error {
+	
+	q := `DELETE FROM Images WHERE id = $1`
+
+	_, err := s.db.ExecContext(ctx, q, imageID)
+	if err != nil {
+		return fmt.Errorf("can't remove image: %w", err)
 	}
 
 	return nil
@@ -267,10 +334,10 @@ func (s *Storage) IsExistsVector(ctx context.Context, productID uint) (bool, err
 }
 
 // GetVectorsByUserName возвращает список векторов по имени пользователя.
-func (s *Storage) GetVectorsByUserName(ctx context.Context, userName string) ([]*storage.ImageMeta, error) {
-	q := `SELECT id, vector FROM Images WHERE username = $1`
+func (s *Storage) GetVectorsByShopID(ctx context.Context, shopID uint) ([]*storage.ImageMeta, error) {
+	q := `SELECT id, vector FROM Images WHERE shop_id = $1`
 
-	rows, err := s.db.QueryContext(ctx, q, userName)
+	rows, err := s.db.QueryContext(ctx, q, shopID)
 	if err != nil {
 		return nil, fmt.Errorf("can't get vectors by user: %w", err)
 	}
@@ -287,7 +354,7 @@ func (s *Storage) GetVectorsByUserName(ctx context.Context, userName string) ([]
 		}
 
 		float32Vector, err := stringToFloat32Slice(vectorStr)
-		if err != nil{
+		if err != nil {
 			return nil, fmt.Errorf("can't stringToFloat32Slice: %w", err)
 		}
 
@@ -316,12 +383,14 @@ func (s *Storage) UpdProduct(ctx context.Context, productID uint, param string, 
 func (s *Storage) Init(ctx context.Context) error {
 	q1 := `CREATE TABLE IF NOT EXISTS products (
 		id SERIAL PRIMARY KEY,
-		user_name TEXT,
+		shop_id SERIAL,
+		user_id SERIAL,
 		name TEXT,
 		description TEXT,
 		count INTEGER,
 		purchase_price TEXT,
-		selling_price TEXT
+		selling_price TEXT,
+		bar_code TEXT
 	)`
 
 	_, err := s.db.ExecContext(ctx, q1)
@@ -331,7 +400,8 @@ func (s *Storage) Init(ctx context.Context) error {
 
 	q2 := `CREATE TABLE IF NOT EXISTS images (
 		id SERIAL PRIMARY KEY,
-		username TEXT,
+		user_id serial,
+		shop_id serial,
 		product_id SERIAL,
 		blob_content BYTEA,
 		vector TEXT
@@ -341,11 +411,11 @@ func (s *Storage) Init(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("can't create Images table: %w", err)
 	}
-	
 
 	q3 := `CREATE TABLE IF NOT EXISTS orders (
 		id SERIAL PRIMARY KEY,
-		username TEXT NOT NULL,
+		user_id serial NOT NULL,
+		shop_id serial NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
 		amount NUMERIC(10, 2) NOT NULL,
 		date DATE NOT NULL DEFAULT now(),
 		pay_type_id NUMERIC(2),
@@ -371,7 +441,7 @@ func (s *Storage) Init(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("can't create order_details table: %w", err)
 	}
-	
+
 	q5 := `CREATE TABLE IF NOT EXISTS pay_types (
 		id SERIAL PRIMARY KEY,
 		description text
@@ -384,8 +454,9 @@ func (s *Storage) Init(ctx context.Context) error {
 
 	q6 := `CREATE TABLE IF NOT EXISTS shops (
 		id SERIAL PRIMARY KEY,
-		name VARCHAR(255) NOT NULL,
-		owner_username VARCHAR(255) NOT NULL,
+		name VARCHAR(255),
+		description VARCHAR(255),
+		owner_user_id VARCHAR(50) NOT NULL,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);`
 
@@ -394,13 +465,17 @@ func (s *Storage) Init(ctx context.Context) error {
 		return fmt.Errorf("can't create shops table: %w", err)
 	}
 
-	q7 := `CREATE TABLE IF NOT EXISTS shop_users (
+	q7 := `CREATE TABLE IF NOT EXISTS users (
 		id SERIAL PRIMARY KEY,
-		shop_id INT NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
-		username VARCHAR(255) NOT NULL,
-		role VARCHAR(50) NOT NULL, -- 'admin', 'seller', 'viewer'
+		telegram_user_id SERIAL NOT NULL,
+		shop_id serial NOT NULL REFERENCES shops(id) ON DELETE CASCADE,
+		username VARCHAR(255),
+		first_name VARCHAR(30),
+		last_name VARCHAR(30),
+		role VARCHAR(50) NOT NULL, -- 'admin', 'customer', 'clerk'
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		UNIQUE (shop_id, username)
+		last_activity_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE (shop_id, telegram_user_id)
 	);`
 
 	_, err = s.db.ExecContext(ctx, q7)
@@ -410,6 +485,7 @@ func (s *Storage) Init(ctx context.Context) error {
 
 	return nil
 }
+
 // Конвертация []float32 в строку
 func float32SliceToString(slice []float32) string {
 	// Преобразуем каждый элемент в строку и соединяем через запятую
@@ -437,36 +513,27 @@ func stringToFloat32Slice(str string) ([]float32, error) {
 	return floatSlice, nil
 }
 
-func (s *Storage) CreateShop(ctx context.Context, name, ownerUsername string) (int, error) {
-	query := `INSERT INTO shops (name, owner_username) VALUES ($1, $2) RETURNING id`
+func (s *Storage) CreateShop(ctx context.Context, name, userID uint) (int, error) {
+	query := `INSERT INTO shops (name, owner_user_id, created_at) VALUES ($1, $2, NOW()) RETURNING id`
 	var shopID int
-	err := s.db.QueryRowContext(ctx, query, name, ownerUsername).Scan(&shopID)
+	err := s.db.QueryRowContext(ctx, query, name, userID).Scan(&shopID)
 	if err != nil {
 		return 0, fmt.Errorf("error creating shop: %w", err)
 	}
 	return shopID, nil
 }
 
-func (s *Storage) AddShopUser(ctx context.Context, shopID int, username, role string) error {
-	query := `INSERT INTO shop_users (shop_id, username, role) VALUES ($1, $2, $3) ON CONFLICT (shop_id, username) DO NOTHING`
-	_, err := s.db.ExecContext(ctx, query, shopID, username, role)
-	if err != nil {
-		return fmt.Errorf("error adding user to shop: %w", err)
-	}
-	return nil
-}
-
-func (s *Storage) GetUserRole(ctx context.Context, shopID int, username string) (string, error) {
-	query := `SELECT role FROM shop_users WHERE shop_id = $1 AND username = $2`
-	var role string
-	err := s.db.QueryRowContext(ctx, query, shopID, username).Scan(&role)
+func (s *Storage) GetShopName(ctx context.Context, shopID int) (string, error) {
+	query := `SELECT name FROM shops WHERE id = $1`
+	var name string
+	err := s.db.QueryRowContext(ctx, query, shopID).Scan(&name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", nil // Пользователь не найден
 		}
-		return "", fmt.Errorf("error fetching user role: %w", err)
+		return "", fmt.Errorf("error fetching shop name: %w", err)
 	}
-	return role, nil
+	return name, nil
 }
 
 // GetPhotosByProductID возвращает список байтовых массивов (контентов фото) для указанного productID.
@@ -483,12 +550,14 @@ func (s *Storage) GetProductByImageID(ctx context.Context, imageID uint) (*stora
 	product := &storage.Product{}
 	err := row.Scan(
 		&product.ProductID,
-		&product.UserName,
+		&product.ShopID,
+		&product.UserID,
 		&product.Name,
 		&product.Description,
 		&product.Count,
 		&product.PurchasePrice,
 		&product.SellingPrice,
+		&product.BarCode,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -498,4 +567,176 @@ func (s *Storage) GetProductByImageID(ctx context.Context, imageID uint) (*stora
 	}
 
 	return product, nil
+}
+
+// InitUser инициализация пользователя
+func (s *Storage) InitUser(user *storage.User) error {
+	// Транзакция для проверки и вставки данных
+	tx, err := s.db.Begin()
+	if err != nil {
+		log.Printf("Failed to start transaction: %v", err)
+		return err
+	}
+	defer tx.Rollback()
+
+	var shopID uint
+	// Если ShopID = 0, определяем последний магазин, с которым пользователь взаимодействовал
+	if user.ShopID == 0 {
+		shopID, err = s.getLastShopID(tx, user)
+		if err != nil && err != sql.ErrNoRows {
+			log.Printf("Failed to get last shop ID: %v", err)
+			return err
+		}
+
+		// Если магазин не найден, создаем новый
+		if err == sql.ErrNoRows {
+			shopID, err = s.createShop(tx, user.UserID)
+			if err != nil {
+				log.Printf("Failed to create shop: %v", err)
+				return err
+			}
+		}
+		user.ShopID = shopID
+	}
+
+	// Проверяем существование пользователя в конкретном магазине
+	exists, err := s.userExists(tx, user.UserID, user.ShopID, user.Role)
+	if err != nil {
+		log.Printf("Failed to check user existence: %v", err)
+		return err
+	}
+
+	if exists {
+		// Обновляем время последней активности
+		err = s.updateUserLastActivity(tx, user.UserID, user.ShopID)
+		if err != nil {
+			log.Printf("Failed to update user last activity: %v", err)
+			return err
+		}
+	} else {
+		// Создаем нового пользователя
+		err = s.createUser(tx, user)
+		if err != nil {
+			log.Printf("Failed to create user: %v", err)
+			return err
+		}
+	}
+
+	// Фиксируем изменения
+	if err := tx.Commit(); err != nil {
+		log.Printf("Failed to commit transaction: %v", err)
+		return err
+	}
+
+	return nil
+}
+
+// getLastShopID Функция для получения последнего магазина пользователя
+func (s *Storage) getLastShopID(tx *sql.Tx, user *storage.User) (uint, error) {
+	var shopID uint
+	query := `
+		SELECT u.shop_id, u.role
+		FROM users u
+		WHERE u.telegram_user_id = $1
+		ORDER BY u.last_activity_at DESC
+		LIMIT 1;
+	`
+	err := tx.QueryRow(query, user.UserID).Scan(&shopID, &user.Role)
+	return shopID, err
+}
+
+// createShop Функция для создания нового магазина
+func (s *Storage) createShop(tx *sql.Tx, userID uint) (uint, error) {
+	var shopID uint
+	query := `
+		INSERT INTO shops (name, description, owner_user_id, created_at)
+		VALUES ($1, $2, $3, NOW())
+		RETURNING id;
+	`
+	err := tx.QueryRow(query, "", "", userID).Scan(&shopID)
+	return shopID, err
+}
+
+// userExists Функция для проверки существования пользователя
+func (s *Storage) userExists(tx *sql.Tx, userID uint, shopID uint, role string) (bool, error) {
+	var exists bool
+	query := `
+		SELECT EXISTS (
+			SELECT 1
+			FROM users u
+			WHERE u.telegram_user_id = $1 AND u.shop_id = $2 AND u.role = $3
+		);
+	`
+	err := tx.QueryRow(query, userID, shopID, role).Scan(&exists)
+	return exists, err
+}
+
+// updateUserLastActivity Функция для обновления времени последней активности пользователя
+func (s *Storage) updateUserLastActivity(tx *sql.Tx, userID uint, shopID uint) error {
+	query := `
+		UPDATE users
+		SET last_activity_at = NOW()
+		WHERE telegram_user_id = $1 AND shop_id = $2;
+	`
+	_, err := tx.Exec(query, userID, shopID)
+	return err
+}
+
+// updateUserLastActivity Функция для создания нового пользователя
+func (s *Storage) createUser(tx *sql.Tx, user *storage.User) error {
+	query := `
+		INSERT INTO users (shop_id, telegram_user_id,  username, role, created_at, last_activity_at, first_name, last_name)
+		VALUES ($1, $2, $3, $4, NOW(), NOW(), $5, $6);
+	`
+	_, err := tx.Exec(query, user.ShopID, user.UserID, user.UserName, user.Role, user.FirstName, user.LastName)
+	return err
+}
+
+// GetUsersByShopID возвращает список пользователей магазина.
+func (s *Storage) GetUsersByShopID(ctx context.Context, shopID uint) ([]*storage.User, error) {
+	q := `SELECT id, first_name, last_name, username, role 
+		  FROM users 
+		  WHERE shop_id = $1
+		  AND role IN ('customer', 'employee')
+		  ORDER BY role`
+
+	rows, err := s.db.QueryContext(ctx, q, shopID)
+	if err != nil {
+		return nil, fmt.Errorf("can't get users: %w", err)
+	}
+	defer rows.Close()
+
+	var users []*storage.User
+	for rows.Next() {
+		var user storage.User
+		err := rows.Scan(&user.UserID, &user.FirstName, &user.LastName, &user.UserName, &user.Role)
+		if err != nil {
+			return nil, fmt.Errorf("can't scan user row: %w", err)
+		}
+
+		users = append(users, &user) // Добавляем копию структуры
+	}
+
+	// Проверяем ошибки при итерации
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", err)
+	}
+
+	return users, nil
+}
+
+// updateUserRole обновление роли пользователя
+func (s *Storage) UpdateUserRole(ctx context.Context, userID uint, shopID uint, role string) error {
+
+	query := `
+		UPDATE users
+		SET role = $3
+		WHERE id = $1 AND shop_id = $2;
+	`
+	_, err := s.db.ExecContext(ctx, query, userID, shopID, role)
+	if err != nil {
+		return fmt.Errorf("can't update user role: %w", err)
+	}
+
+	return nil
 }
