@@ -119,9 +119,9 @@ const (
 )
 
 const (
-	roleCustomer = "customer" // Владелец магазина
-	roleEmployee = "employee" // Сотрудник
-	roleClient   = "client"   // Посетитель
+	RoleCustomer = "customer" // Владелец магазина
+	RoleEmployee = "employee" // Сотрудник
+	RoleClient   = "client"   // Посетитель
 )
 
 const (

@@ -15,7 +15,7 @@ import (
 func getMenuKeyboard(role string) tgbotapi.InlineKeyboardMarkup {
 
 	switch role {
-	case roleCustomer:
+	case RoleCustomer:
 		return tgbotapi.NewInlineKeyboardMarkup(
 			tgbotapi.NewInlineKeyboardRow(
 				tgbotapi.NewInlineKeyboardButtonData("Магазин", ShopKeyboardCmd),
@@ -24,14 +24,14 @@ func getMenuKeyboard(role string) tgbotapi.InlineKeyboardMarkup {
 			),
 		)
 
-	case roleEmployee:
+	case RoleEmployee:
 		return tgbotapi.NewInlineKeyboardMarkup(
 			tgbotapi.NewInlineKeyboardRow(
 				tgbotapi.NewInlineKeyboardButtonData("Магазин", ShopKeyboardCmd),
 			),
 		)
 
-	case roleClient:
+	case RoleClient:
 		return tgbotapi.NewInlineKeyboardMarkup(
 			tgbotapi.NewInlineKeyboardRow(
 				tgbotapi.NewInlineKeyboardButtonData("Магазин", ShopKeyboardCmd),
@@ -44,7 +44,7 @@ func getMenuKeyboard(role string) tgbotapi.InlineKeyboardMarkup {
 func getShopKeyboard(role string) tgbotapi.InlineKeyboardMarkup {
 
 	switch role {
-	case roleCustomer:
+	case RoleCustomer:
 		return tgbotapi.NewInlineKeyboardMarkup(
 			tgbotapi.NewInlineKeyboardRow(
 				tgbotapi.NewInlineKeyboardButtonData("Редактировать магазин", EditShopKeyboardCmd),
@@ -63,7 +63,7 @@ func getShopKeyboard(role string) tgbotapi.InlineKeyboardMarkup {
 			),
 		)
 
-	case roleEmployee:
+	case RoleEmployee:
 		return tgbotapi.NewInlineKeyboardMarkup(
 			tgbotapi.NewInlineKeyboardRow(
 				tgbotapi.NewInlineKeyboardButtonData("Сменить магазин", ChangeShopCmd),
@@ -76,7 +76,7 @@ func getShopKeyboard(role string) tgbotapi.InlineKeyboardMarkup {
 			),
 		)
 
-	case roleClient:
+	case RoleClient:
 		return tgbotapi.NewInlineKeyboardMarkup(
 			tgbotapi.NewInlineKeyboardRow(
 				tgbotapi.NewInlineKeyboardButtonData("Сменить магазин", ChangeShopCmd),
@@ -93,7 +93,7 @@ func getShopKeyboard(role string) tgbotapi.InlineKeyboardMarkup {
 }
 
 func getEditShopKeyboard(role string) tgbotapi.InlineKeyboardMarkup {
-	if role == roleCustomer {
+	if role == RoleCustomer {
 		return tgbotapi.NewInlineKeyboardMarkup(
 			tgbotapi.NewInlineKeyboardRow(
 				tgbotapi.NewInlineKeyboardButtonData("Изменить название магазина", EditShopNameCmd),
@@ -117,7 +117,7 @@ func getEditShopKeyboard(role string) tgbotapi.InlineKeyboardMarkup {
 
 // getInviteUsersKeyboard возвращает кнопки для генерации приглашения
 func getInviteUsersKeyboard(role string) tgbotapi.InlineKeyboardMarkup {
-	if role == roleCustomer {
+	if role == RoleCustomer {
 		return tgbotapi.NewInlineKeyboardMarkup(
 			tgbotapi.NewInlineKeyboardRow(
 				tgbotapi.NewInlineKeyboardButtonData("Пригласительное для сотрудника", InviteEmployeeCmd),
@@ -224,11 +224,11 @@ func (b *Bot) procEditShopName(message *tgbotapi.Message) error {
 }
 
 func (b *Bot) procInviteEmployee(message *tgbotapi.Message) error {
-	return b.processInvite(message, roleEmployee, "Ссылка для сотрудника")
+	return b.processInvite(message, RoleEmployee, "Ссылка для сотрудника")
 }
 
 func (b *Bot) procInviteClient(message *tgbotapi.Message) error {
-	return b.processInvite(message, roleClient, "Ссылка для клиента")
+	return b.processInvite(message, RoleClient, "Ссылка для клиента")
 }
 
 func (b *Bot) processInvite(message *tgbotapi.Message, role string, captionPrefix string) error {
@@ -268,7 +268,7 @@ func (b *Bot) processInvite(message *tgbotapi.Message, role string, captionPrefi
 // generateInviteLink генерирует реферальную ссылку
 func (b *Bot) generateInviteLink(chatID int64, shopID uint, role string) (string, error) {
 	user, ok := b.user[chatID]
-	if !ok || user.Role != roleCustomer {
+	if !ok || user.Role != RoleCustomer {
 		return "", fmt.Errorf("только владелец магазина может генерировать ссылки")
 	}
 
@@ -382,7 +382,7 @@ func (b *Bot) procGrantRoleCustomer(message *tgbotapi.Message, userID uint) erro
 	b.selectedParams[chatID][GrantRoleEmployeeCmd+prefix] = false
 	b.selectedParams[chatID][GrantRoleClientCmd+prefix] = false
 
-	err := b.storage.UpdateUserRole(context.Background(), userID, b.user[chatID].ShopID, roleCustomer)
+	err := b.storage.UpdateUserRole(context.Background(), userID, b.user[chatID].ShopID, RoleCustomer)
 	if err != nil {
 		return err
 	}
@@ -413,7 +413,7 @@ func (b *Bot) procGrantRoleEmployee(message *tgbotapi.Message, userID uint) erro
 	b.selectedParams[chatID][GrantRoleEmployeeCmd+prefix] = true
 	b.selectedParams[chatID][GrantRoleClientCmd+prefix] = false
 
-	err := b.storage.UpdateUserRole(context.Background(), userID, b.user[chatID].ShopID, roleEmployee)
+	err := b.storage.UpdateUserRole(context.Background(), userID, b.user[chatID].ShopID, RoleEmployee)
 	if err != nil {
 		return err
 	}
@@ -444,7 +444,7 @@ func (b *Bot) procGrantRoleClient(message *tgbotapi.Message, userID uint) error 
 	b.selectedParams[chatID][GrantRoleEmployeeCmd+prefix] = false
 	b.selectedParams[chatID][GrantRoleClientCmd+prefix] = true
 
-	err := b.storage.UpdateUserRole(context.Background(), userID, b.user[chatID].ShopID, roleClient)
+	err := b.storage.UpdateUserRole(context.Background(), userID, b.user[chatID].ShopID, RoleClient)
 	if err != nil {
 		return err
 	}

@@ -1,35 +1,29 @@
 package reports
 
 import (
-	"context"
-	"fmt"
-	"log"
-
-	"github.com/Bariban/vector-shop-bot/pkg/storage"
-	"github.com/Bariban/vector-shop-bot/pkg/utils"
+	t "github.com/Bariban/vector-shop-bot/pkg/telegram"
+	m "github.com/Bariban/vector-shop-bot/pkg/telegram/reports/model"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
-
-	qrcode "github.com/skip2/go-qrcode"
 )
 
 func getReportPeriodKeyboard(role string) tgbotapi.InlineKeyboardMarkup {
 
 	switch role {
-	case roleCustomer:
+	case t.RoleCustomer:
 		return tgbotapi.NewInlineKeyboardMarkup(
 			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("Неделя", ShopKeyboardCmd),
+				tgbotapi.NewInlineKeyboardButtonData("Неделя", m.WeekReportCmd),
 			),
 			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("Текущий месяц", ShopKeyboardCmd),
+				tgbotapi.NewInlineKeyboardButtonData("Текущий месяц", m.CurrentMonthReportCmd),
 			),
 			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("Предыдущий месяц", ShopKeyboardCmd),
+				tgbotapi.NewInlineKeyboardButtonData("Предыдущий месяц", m.PreviousMonthReportCmd),
 			),
 			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("Год", ShopKeyboardCmd),
+				tgbotapi.NewInlineKeyboardButtonData("Год", m.EarReportCmd),
 			),
 		)
-	return tgbotapi.NewInlineKeyboardMarkup()
 	}
+	return tgbotapi.NewInlineKeyboardMarkup()
 }

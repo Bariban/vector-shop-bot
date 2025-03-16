@@ -231,7 +231,7 @@ func (b *Bot) procStartArgCmd(message *tgbotapi.Message) error {
 			return err
 		}
 
-		// Разбираем payload (например, "123|roleEmployee")
+		// Разбираем payload (например, "123|RoleEmployee")
 		parts := strings.Split(string(payload), "|")
 		if len(parts) != 2 {
 			b.bot.Send(tgbotapi.NewMessage(chatID, "Ошибка в ссылке приглашения!"))
@@ -245,7 +245,7 @@ func (b *Bot) procStartArgCmd(message *tgbotapi.Message) error {
 		}
 
 		role := parts[1]
-		if role != roleCustomer && role != roleEmployee && role != roleClient {
+		if role != RoleCustomer && role != RoleEmployee && role != RoleClient {
 			b.bot.Send(tgbotapi.NewMessage(chatID, "Некорректная роль!"))
 			return fmt.Errorf("invalid role")
 		}
@@ -278,7 +278,7 @@ func (b *Bot) procStartArgCmd(message *tgbotapi.Message) error {
 
 		// Ответ пользователю
 		b.bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("Добро пожаловать в магазин %s!", shopName)))
-		if role == roleEmployee {
+		if role == RoleEmployee {
 			b.bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("Вам присвоена роль сотрудника")))
 		}
 

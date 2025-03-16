@@ -139,9 +139,9 @@ func (b *Bot) getOrCreateIndex(update tgbotapi.Update) error {
 	return nil
 }
 
-//RebuildIndex пересоздание индекса
+// RebuildIndex пересоздание индекса
 func (b *Bot) RebuildIndex(chatID int64) error {
-    b.saveMutex.Lock()
+	b.saveMutex.Lock()
 	defer b.saveMutex.Unlock()
 
 	// Создаем новый индекс
@@ -195,7 +195,7 @@ func (b *Bot) getOrCreateUser(update tgbotapi.Update) error {
 			LastName:  message.Chat.LastName,
 			UserName:  message.Chat.UserName,
 			UserID:    uint(message.Chat.ID),
-			Role:      roleCustomer,
+			Role:      RoleCustomer,
 		}
 	}
 	return b.storage.InitUser(b.user[chatID])
