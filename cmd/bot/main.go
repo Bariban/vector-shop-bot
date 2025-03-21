@@ -16,8 +16,8 @@ func main() {
 		log.Fatal(err)
 	}
 	
-	token := cfg.TelegramToken
-	botApi, err := tgbotapi.NewBotAPI(token)
+	//token := cfg.TelegramToken
+	botApi, err := tgbotapi.NewBotAPI("8015128447:AAHNjRFRjWP1LQ4nqePLtjJhaoiBo6BFIKA")
 	if err != nil {
 		log.Fatal(err)
 	}
