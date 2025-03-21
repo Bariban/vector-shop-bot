@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strconv"
-	"strings"
 
 	_ "github.com/lib/pq"
 
@@ -19,7 +17,6 @@ import (
 type Storage struct {
 	db *sql.DB
 }
-
 
 // New создает новое подключение к PostgreSQL.
 func New() (*Storage, error) {
@@ -135,13 +132,15 @@ func (s *Storage) SaveImage(ctx context.Context, p *storage.Product) (*storage.P
           VALUES ($1, $2, $3, $4, $5) RETURNING id`
 
 	for i, image := range p.Image {
-		if image.Float == nil {continue}
+		if image.Float == nil {
+			continue
+		}
 		var imageID uint
 		err := s.db.QueryRowContext(ctx, q,
 			p.ProductID,
 			p.UserID,
 			image.Byte,
-			float32SliceToString(image.Float),
+			image.Float,
 			p.ShopID).Scan(&imageID)
 		if err != nil {
 			return nil, fmt.Errorf("can't save photo: %w", err)
@@ -164,7 +163,7 @@ func (s *Storage) GetPhotosByProductID(ctx context.Context, productID uint) ([]s
 	defer rows.Close()
 	var images []storage.ImageMeta
 	for rows.Next() {
-		var image storage.ImageMeta		
+		var image storage.ImageMeta
 		if err := rows.Scan(&image.ImageID, &image.Byte); err != nil {
 			return nil, fmt.Errorf("can't scan photo content: %w", err)
 		}
@@ -185,19 +184,14 @@ func (s *Storage) GetVectorByImageID(ctx context.Context, ImageID uint) ([]float
 	}
 	defer rows.Close()
 
-	var vectorStr string
+	var vector []float32
 	for rows.Next() {
-		if err := rows.Scan(&vectorStr); err != nil {
+		if err := rows.Scan(&vector); err != nil {
 			return nil, fmt.Errorf("can't scan photo content: %w", err)
 		}
 	}
 
-	float32Vector, err := stringToFloat32Slice(vectorStr)
-	if err != nil {
-		return nil, fmt.Errorf("can't stringToFloat32Slice: %w", err)
-	}
-
-	return float32Vector, nil
+	return vector, nil
 }
 
 // GetProducts возвращает список продуктов по имени пользователя.
@@ -227,6 +221,48 @@ func (s *Storage) GetProducts(ctx context.Context, shopID uint) ([]*storage.Prod
 		p.SellingPrice, _ = decimal.NewFromString(sellingPrice)
 
 		products = append(products, &p)
+	}
+
+	return products, nil
+}
+
+// GetNearestNeighbors возвращает ближайшие вектора (по косинусной близости) к заданному вектору.
+func (s *Storage) GetNearestNeighbors(ctx context.Context, images []*storage.ImageMeta, limit int) ([]*storage.Product, error) {
+	var products []*storage.Product
+	for _, inputImage := range images {
+		// Проверяем, что вектор не пустой
+		if inputImage.Float == nil {
+			continue
+		}
+		q := `SELECT id, user_name, name, description, count, purchase_price, selling_price 
+		  FROM Products WHERE shop_id = $1
+		  ORDER BY vector <-> $1
+		  LIMIT $2
+		`
+
+		rows, err := s.db.QueryContext(ctx, q, inputImage.Float, limit)
+		if err != nil {
+			log.Printf("can't find nearest neighbors: %v", err)
+			return nil, fmt.Errorf("can't find nearest neighbors: %w", err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var p storage.Product
+			var purchasePrice, sellingPrice string
+
+			err := rows.Scan(
+				&p.ProductID, &p.UserID, &p.Name, &p.Description, &p.Count, &purchasePrice, &sellingPrice,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("can't scan product row: %w", err)
+			}
+
+			p.PurchasePrice, _ = decimal.NewFromString(purchasePrice)
+			p.SellingPrice, _ = decimal.NewFromString(sellingPrice)
+
+			products = append(products, &p)
+		}
 	}
 
 	return products, nil
@@ -309,7 +345,7 @@ func (s *Storage) RemoveProduct(ctx context.Context, productID uint) error {
 
 // Remove удаляет продукт из базы данных.
 func (s *Storage) DeleteImage(ctx context.Context, imageID uint) error {
-	
+
 	q := `DELETE FROM Images WHERE id = $1`
 
 	_, err := s.db.ExecContext(ctx, q, imageID)
@@ -346,21 +382,16 @@ func (s *Storage) GetVectorsByShopID(ctx context.Context, shopID uint) ([]*stora
 	var imageMeta []*storage.ImageMeta
 	for rows.Next() {
 		var id uint
-		var vectorStr string // Временный массив для чтения из PostgreSQL
+		var vector []float32 // Временный массив для чтения из PostgreSQL
 
-		err := rows.Scan(&id, &vectorStr)
+		err := rows.Scan(&id, &vector)
 		if err != nil {
 			return nil, fmt.Errorf("can't scan vector row: %w", err)
 		}
 
-		float32Vector, err := stringToFloat32Slice(vectorStr)
-		if err != nil {
-			return nil, fmt.Errorf("can't stringToFloat32Slice: %w", err)
-		}
-
 		imageMeta = append(imageMeta, &storage.ImageMeta{
 			ImageID: id,
-			Float:   float32Vector,
+			Float:   vector,
 		})
 	}
 
@@ -484,33 +515,6 @@ func (s *Storage) Init(ctx context.Context) error {
 	}
 
 	return nil
-}
-
-// Конвертация []float32 в строку
-func float32SliceToString(slice []float32) string {
-	// Преобразуем каждый элемент в строку и соединяем через запятую
-	strSlice := make([]string, len(slice))
-	for i, num := range slice {
-		strSlice[i] = strconv.FormatFloat(float64(num), 'f', -1, 32) // Без ограничения точности
-	}
-	return strings.Join(strSlice, ",")
-}
-
-// Конвертация строки обратно в []float32
-func stringToFloat32Slice(str string) ([]float32, error) {
-	// Разделяем строку по запятой
-	strSlice := strings.Split(str, ",")
-	floatSlice := make([]float32, len(strSlice))
-
-	// Конвертируем каждый элемент в float32
-	for i, s := range strSlice {
-		num, err := strconv.ParseFloat(s, 32)
-		if err != nil {
-			return nil, fmt.Errorf("не удалось преобразовать '%s' в float32: %w", s, err)
-		}
-		floatSlice[i] = float32(num)
-	}
-	return floatSlice, nil
 }
 
 func (s *Storage) CreateShop(ctx context.Context, name, userID uint) (int, error) {

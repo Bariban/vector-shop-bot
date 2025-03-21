@@ -541,7 +541,7 @@ func (b *Bot) procSampleImage(message *tgbotapi.Message) error {
 				Image: []*storage.ImageMeta{imageMeta},
 			}
 
-			foundProduct, err = b.getProductsByVector(message, product.Image)
+			foundProduct, err = b.storage.GetNearestNeighbors(context.Background(), product.Image, 3)
 			if err != nil {
 				msg := tgbotapi.NewMessage(chatID, "Ошибка обработки фото.")
 				_, _ = b.bot.Send(msg)
